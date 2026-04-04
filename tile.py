@@ -7,6 +7,7 @@ Each tile shows a plant's icon, health bar, water bar, and status badges.
 
 import tkinter as tk
 from plant import Plant
+from garden_of_inheritance import theme
 
 
 # ============================================================================
@@ -35,15 +36,6 @@ def lerp_color(c1, c2, t):
         lerp(c1[1], c2[1], t),
         lerp(c1[2], c2[2], t),
     )
-
-
-# Color anchors (RGB tuples)
-RED = (220, 53, 69)
-YELLOW = (255, 193, 7)
-GREEN = (40, 167, 69)
-
-BLUE_LIGHT = (222, 235, 247)
-BLUE_DARK = (33, 113, 181)
 
 
 # ============================================================================
@@ -103,9 +95,9 @@ class TileCanvas(tk.Canvas):
             parent,
             width=self.w,
             height=self.h,
-            bg=self.soil,
+            bg=configs.get("FIELD_BG", theme.FIELD_BG),
             highlightthickness=4,
-            highlightbackground="gray",
+            highlightbackground=theme.FIELD_EDGE,
             bd=0,
             relief="flat"
         )
@@ -129,12 +121,37 @@ class TileCanvas(tk.Canvas):
     
     def _create_background(self):
         """Create the soil background rectangle."""
-        self.bg_rect = self.create_rectangle(
-            0, 0, self.w, self.h,
-            fill=self.soil,
-            outline="", width=0,
+        grass_h = max(8, self.w // 7)
+        self.field_shadow = self.create_rectangle(
+            2, 4, self.w - 1, self.h - 1,
+            fill=theme.TILE_SOIL_EDGE,
+            outline="",
+            width=0,
             tags="bg"
         )
+        self.bg_rect = self.create_rectangle(
+            2, grass_h, self.w - 3, self.h - 4,
+            fill=self.soil,
+            outline=theme.TILE_SOIL_EDGE, width=2,
+            tags="bg"
+        )
+        self.grass_strip = self.create_rectangle(
+            2, 2, self.w - 3, grass_h + 2,
+            fill=theme.TILE_GRASS_TOP,
+            outline=theme.TILE_GRASS_SHADE,
+            width=1,
+            tags="bg"
+        )
+        self.furrow_lines = []
+        for offset in range(grass_h + 10, self.h - 6, max(12, self.w // 5)):
+            self.furrow_lines.append(
+                self.create_line(
+                    8, offset, self.w - 8, offset,
+                    fill=theme.TILE_SOIL_FURROW,
+                    width=2,
+                    tags="bg"
+                )
+            )
     
     def _create_water_bar(self):
         """Create the vertical water level bar on the left side."""
@@ -209,8 +226,8 @@ class TileCanvas(tk.Canvas):
             self.w // 2 + self.water_thick // 2,
             label_y,
             text="",
-            font=("Segoe UI", 9, "bold"),
-            fill="#1f1f1f",
+            font=(theme.UI_FONT, 9, "bold"),
+            fill=theme.TILE_LABEL_FG,
             tags=("tile_label",)
         )
     
@@ -228,15 +245,15 @@ class TileCanvas(tk.Canvas):
         # P badge (pollinated): top-right
         p_x = plot_x1 - self.p_inset_right - self.badge_size
         p_y = self.badge_y
-        self._draw_badge(p_x, p_y, "P", bg="#FFD54F", fg="#000000", tag="p_badge")
+        self._draw_badge(p_x, p_y, "P", bg="#f3d679", fg=theme.TEXT_PRIMARY, tag="p_badge")
         
         # ! badge (pollen ready): same position as P
-        self._draw_badge(p_x, p_y, "!", bg="#FFCDD2", fg="#B71C1C", tag="bang_badge")
+        self._draw_badge(p_x, p_y, "!", bg="#e8a97f", fg="#5e1d16", tag="bang_badge")
         
         # E badge (emasculated): top-left
         e_x = plot_x0 - self.e_overhang_left
         e_y = self.badge_y
-        self._draw_badge(e_x, e_y, "E", bg="#BBDEFB", fg="#0D47A1", tag="e_badge")
+        self._draw_badge(e_x, e_y, "E", bg="#a7d0e3", fg="#1f4660", tag="e_badge")
     
     def _draw_badge(self, x, y, char, bg, fg, tag):
         """
@@ -255,7 +272,7 @@ class TileCanvas(tk.Canvas):
         self.create_rectangle(
             x, y, x + s, y + s,
             fill=bg,
-            outline="", width=0,
+            outline=theme.TILE_BADGE_EDGE, width=1,
             tags=(tag, "badge_group")
         )
         
@@ -263,7 +280,7 @@ class TileCanvas(tk.Canvas):
         self.create_text(
             x + s / 2, y + s / 2,
             text=char,
-            font=("Arial", 12, "bold"),
+            font=(theme.UI_FONT, 11, "bold"),
             fill=fg,
             tags=(tag, "badge_group")
         )
@@ -316,7 +333,7 @@ class TileCanvas(tk.Canvas):
         """
         # Update selection border
         try:
-            border_color = "darkorange" if self.selected else self.soil
+            border_color = theme.SELECTION_GOLD if self.selected else theme.FIELD_EDGE
             self.config(
                 highlightbackground=border_color,
                 highlightcolor=border_color
@@ -495,9 +512,9 @@ class TileCanvas(tk.Canvas):
         # Color gradient: red → yellow → green
         t = percent / 100
         if t < 0.5:
-            color = lerp_color(RED, YELLOW, t * 2)
+            color = lerp_color(theme.HEALTH_LOW, theme.HEALTH_MID, t * 2)
         else:
-            color = lerp_color(YELLOW, GREEN, (t - 0.5) * 2)
+            color = lerp_color(theme.HEALTH_MID, theme.HEALTH_HIGH, (t - 0.5) * 2)
         
         self.itemconfig(self.hb_fill, fill=color)
     
@@ -528,7 +545,7 @@ class TileCanvas(tk.Canvas):
         )
         
         # Color gradient: light blue → dark blue
-        color = lerp_color(BLUE_LIGHT, BLUE_DARK, percent / 100)
+        color = lerp_color(theme.WATER_LIGHT, theme.WATER_DARK, percent / 100)
         self.itemconfig(self.wb_fill, fill=color)
     
     # ========================================================================
@@ -547,6 +564,11 @@ class TileCanvas(tk.Canvas):
         # Update background elements
         try:
             self.itemconfigure(self.bg_rect, fill=soil_hex)
+        except Exception:
+            pass
+        try:
+            for line in getattr(self, "furrow_lines", []):
+                self.itemconfigure(line, fill=theme.TILE_SOIL_FURROW)
         except Exception:
             pass
         
