@@ -463,6 +463,12 @@ class TileCanvas(tk.Canvas):
         Skips all tkinter calls when nothing has changed — eliminates the
         majority of render work during stable simulation.
         """
+        # Refresh the field texture first (no-op when textures are not loaded
+        # or the (mode, season, variant, snow) key is unchanged). Must run
+        # before the dirty-flag guard: season changes don't alter the render
+        # state tuple.
+        self._try_set_bg_image()
+
         state = self._get_render_state()
         if state == self._render_state:
             return

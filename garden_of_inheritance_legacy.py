@@ -107,6 +107,7 @@ from garden_of_inheritance.persistence import (
 )
 from garden_of_inheritance import theme
 from garden_of_inheritance import widgets
+from garden_of_inheritance import field_textures
 
 # Wildlife (bees, butterflies, Bruchus pisi) — optional, fails silently if missing
 try:
@@ -2620,10 +2621,24 @@ class GardenApp:
             
             # Create the custom widget
             tile = TileCanvas(self.grid_frame, idx, self, soil, None, tile_configs)
-            # Position it
-            tile.grid(row=idx // TILES_PER_ROW, column=idx % TILES_PER_ROW, padx=2, pady=2)
+            # Position it — no gutters so the grass textures read as one field
+            tile.grid(row=idx // TILES_PER_ROW, column=idx % TILES_PER_ROW, padx=0, pady=0)
             # Store the single object
             self.tiles.append(tile)
+
+        # Activate the Stardew-style field texture pipeline. On any failure
+        # the attributes stay unset and tiles keep the flat-color fallback.
+        try:
+            _loaded = field_textures.load_field_textures(
+                TILE_SIZE, os.path.join(icon_loader.ICONS_DIR, "textures"))
+            if _loaded:
+                (self._bg_pil_images,
+                 self._bg_grass_variants,
+                 self._bg_soil_variants) = _loaded
+                self._bg_current_season = field_textures.season_for_month(
+                    getattr(self.garden, "month", 4))
+        except Exception:
+            pass
 
         # ---------- Mendelian laws row (below the grid in right_panel) ----------
         self.law_row = tk.Frame(right_panel, bg=self.panel_bg, padx=0, pady=8)
@@ -2778,6 +2793,12 @@ class GardenApp:
 # Rendering Methods
 # ============================================================================
     def render_all(self):
+        # Keep the texture season in sync with the sim calendar (cheap: the
+        # per-tile pipeline early-exits when the season key is unchanged).
+        if getattr(self, "_bg_pil_images", None):
+            self._bg_current_season = field_textures.season_for_month(
+                getattr(self.garden, "month", 4))
+
         try:
             self._update_header()
         except Exception:
