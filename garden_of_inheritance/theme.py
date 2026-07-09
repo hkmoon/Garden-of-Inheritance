@@ -123,3 +123,53 @@ def apply_window_options(widget) -> None:
     widget.option_add("*Radiobutton.Background", PANEL_BG)
     widget.option_add("*Radiobutton.Foreground", TEXT_PRIMARY)
     widget.option_add("*Menu.Font", font_spec(UI_FONT, 11))
+
+
+# ---------------------------------------------------------------------------
+# Game-polish gradient / state stops (added for widgets.py). Additive only —
+# existing flat constants above are unchanged.
+# ---------------------------------------------------------------------------
+
+CHIP_BG = "#2e2212"
+CHIP_BORDER = WOOD_DARK
+CHIP_TEXT = "#f5e9c8"
+
+# (inner, outer, glow-rgba-hex8) for glowing icon dots
+ICON_GOLD = ("#ffe082", "#d89020", "#ffdc7855")
+ICON_SEED = ("#fff4c0", "#c8e04a", "#f0f59655")
+
+# (top, bottom, border) gradient stops per button variant
+BTN_WOOD = (WOOD_LIGHT, WOOD_MID, WOOD_DARK)
+BTN_SUCCESS = (BUTTON_SUCCESS_HOVER, BUTTON_SUCCESS_BG, "#4d6631")
+BTN_DANGER = (BUTTON_DANGER_HOVER, BUTTON_DANGER_BG, "#6e2f22")
+BTN_MUTED = ("#c9bfa6", "#b3a888", "#8a7f63")
+
+PANEL_GRAD = (PANEL_BG, PANEL_ALT)
+SHADOW_RGBA = (40, 24, 10, 95)
+
+TILE_SOIL_GRAD = ("#a8743e", "#8a5a30")
+
+
+def _clamp(v: int) -> int:
+    return 0 if v < 0 else 255 if v > 255 else v
+
+
+def _to_rgb(hex_color: str):
+    h = hex_color.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _to_hex(rgb) -> str:
+    return "#%02x%02x%02x" % tuple(_clamp(int(c)) for c in rgb)
+
+
+def hover(hex_color: str, amount: float = 0.10) -> str:
+    """Lighten a hex color toward white by `amount` (0..1)."""
+    r, g, b = _to_rgb(hex_color)
+    return _to_hex((r + (255 - r) * amount, g + (255 - g) * amount, b + (255 - b) * amount))
+
+
+def press(hex_color: str, amount: float = 0.12) -> str:
+    """Darken a hex color toward black by `amount` (0..1)."""
+    r, g, b = _to_rgb(hex_color)
+    return _to_hex((r * (1 - amount), g * (1 - amount), b * (1 - amount)))

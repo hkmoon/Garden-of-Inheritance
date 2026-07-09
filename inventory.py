@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import Toplevel, ttk
 
 from garden_of_inheritance import theme
+from garden_of_inheritance import widgets
 from plant import Plant, STAGE_NAMES
 import icon_loader
 
@@ -27,6 +28,15 @@ def _button_style(app, **overrides):
 
 def _button_fg(app):
     return getattr(app, "button_fg", theme.BUTTON_TEXT_FG)
+
+
+def _pill(parent, text, command, variant="wood", state="normal", **_ignore):
+    """Toolkit pill button; replaces the platform-styled tk.Button pairs."""
+    b = widgets.make_button(parent, text=text, command=command, variant=variant,
+                            height=32, font_size=11)
+    if state == "disabled":
+        b.configure(state="disabled")
+    return b
 
 
 # ============================================================================
@@ -261,6 +271,12 @@ class InventoryPopup(Toplevel):
         self.on_seed_selected = on_seed_selected
         self.seeds_page = 0
 
+        # Wood header strip
+        header = tk.Frame(self, bg=theme.WOOD_MID)
+        header.pack(fill="x")
+        tk.Label(header, text="Inventory", bg=theme.WOOD_MID, fg=theme.TEXT_LIGHT,
+                 font=(theme.DISPLAY_FONT, 16, "bold")).pack(side="left", padx=14, pady=8)
+
         self.seeds_frame = tk.Frame(self, padx=8, pady=8, bg=theme.PANEL_BG)
         self.seeds_frame.pack(fill="both", expand=True)
         self._build_seeds_tab()
@@ -302,31 +318,13 @@ class InventoryPopup(Toplevel):
 
         # Refresh button
         try:
-            if self.app is not None:
-                btn_refresh = tk.Button(
-                    header,
-                    text="Refresh",
-                    command=self.refresh_current_tab,
-                    **self.app.button_style,
-                )
-                self.app._apply_hover(btn_refresh)
-            else:
-                btn_refresh = tk.Button(header, text="Refresh", command=self.refresh_current_tab)
+            btn_refresh = _pill(header, "Refresh", self.refresh_current_tab)
             btn_refresh.pack(side="right")
         except Exception:
             pass
 
         # Previous button
-        if self.app is not None:
-            self.pln_prev = tk.Button(
-                header,
-                text="◀ Prev",
-                command=self._pollen_prev,
-                **self.app.button_style,
-            )
-            self.app._apply_hover(self.pln_prev)
-        else:
-            self.pln_prev = tk.Button(header, text="◀ Prev", command=self._pollen_prev)
+        self.pln_prev = _pill(header, "◀ Prev", self._pollen_prev)
         self.pln_prev.pack(side="left")
 
         # Page label
@@ -334,16 +332,7 @@ class InventoryPopup(Toplevel):
         self.pln_page_label.pack(side="left", padx=8)
 
         # Next button
-        if self.app is not None:
-            self.pln_next = tk.Button(
-                header,
-                text="Next ▶",
-                command=self._pollen_next,
-                **self.app.button_style,
-            )
-            self.app._apply_hover(self.pln_next)
-        else:
-            self.pln_next = tk.Button(header, text="Next ▶", command=self._pollen_next)
+        self.pln_next = _pill(header, "Next ▶", self._pollen_next)
         self.pln_next.pack(side="right")
 
         # Grid for pollen groups
@@ -486,22 +475,7 @@ class InventoryPopup(Toplevel):
                 pass
             self._render_pollen_page()
 
-        discard_btn = tk.Button(
-            header,
-            text="✕",
-            width=2,
-            command=delete_all_pollen,
-            **_button_style(
-                self.app,
-                bg=theme.BUTTON_DANGER_BG,
-                activebackground=theme.BUTTON_DANGER_HOVER,
-                fg=_button_fg(self.app),
-                activeforeground=_button_fg(self.app),
-            ),
-        )
-        if self.app:
-            self.app._apply_hover(discard_btn)
-            discard_btn._hover_bg = theme.BUTTON_DANGER_HOVER
+        discard_btn = _pill(header, "✕", delete_all_pollen, variant="danger")
         discard_btn.pack(side="right", anchor="e")
 
         # Check viability
@@ -559,23 +533,12 @@ class InventoryPopup(Toplevel):
         # Use button (enabled only if viable pollen exists)
         pkt = viable[0] if viable else None
         
-        if self.app is not None:
-            use_btn = tk.Button(
-                frame,
-                text="    Use    ",
-                state=("normal" if pkt is not None else "disabled"),
-                command=(lambda p=pkt: self._use_pollen(p)) if pkt is not None else None,
-                **_button_style(self.app),
-            )
-            self.app._apply_hover(use_btn)
-        else:
-            use_btn = tk.Button(
-                frame,
-                text="Use",
-                state=("normal" if pkt is not None else "disabled"),
-                command=(lambda p=pkt: self._use_pollen(p)) if pkt is not None else None,
-            )
-
+        use_btn = _pill(
+            frame,
+            "Use",
+            (lambda p=pkt: self._use_pollen(p)) if pkt is not None else None,
+            state=("normal" if pkt is not None else "disabled"),
+        )
         use_btn.pack(pady=(6, 0), anchor="center")
     
     def _use_pollen(self, packet):
@@ -625,16 +588,7 @@ class InventoryPopup(Toplevel):
         header.pack(fill="x", pady=(0, 8))
 
         # Previous button
-        if self.app is not None:
-            self.sd_prev = tk.Button(
-                header,
-                text="◀ Prev",
-                command=self._seeds_prev,
-                **self.app.button_style,
-            )
-            self.app._apply_hover(self.sd_prev)
-        else:
-            self.sd_prev = tk.Button(header, text="◀ Prev", command=self._seeds_prev)
+        self.sd_prev = _pill(header, "◀ Prev", self._seeds_prev)
         self.sd_prev.pack(side="left")
 
         # Page label
@@ -642,16 +596,7 @@ class InventoryPopup(Toplevel):
         self.sd_page_label.pack(side="left", padx=8)
 
         # Next button
-        if self.app is not None:
-            self.sd_next = tk.Button(
-                header,
-                text="Next ▶",
-                command=self._seeds_next,
-                **self.app.button_style,
-            )
-            self.app._apply_hover(self.sd_next)
-        else:
-            self.sd_next = tk.Button(header, text="Next ▶", command=self._seeds_next)
+        self.sd_next = _pill(header, "Next ▶", self._seeds_next)
         self.sd_next.pack(side="right")
 
         # Grid for seed groups
@@ -778,24 +723,7 @@ class InventoryPopup(Toplevel):
                 self.app._toast(f"Discarded {removed} seeds.")
             self._render_seeds_page()
 
-        discard_btn = tk.Button(
-            header,
-            text="✕",
-            width=2,
-            command=discard_group,
-            **_button_style(
-                self.app,
-                bg=theme.BUTTON_DANGER_BG,
-                activebackground=theme.BUTTON_DANGER_HOVER,
-                fg=_button_fg(self.app),
-                activeforeground=_button_fg(self.app),
-            ),
-        )
-        
-        if self.app:
-            self.app._apply_hover(discard_btn)
-            discard_btn._hover_bg = theme.BUTTON_DANGER_HOVER
-        
+        discard_btn = _pill(header, "✕", discard_group, variant="danger")
         discard_btn.pack(side="right", anchor="e")
 
         # Seed trait icons
@@ -844,15 +772,8 @@ class InventoryPopup(Toplevel):
                         self._render_seeds_page()
                         break
 
-        b_plant_n = tk.Button(
-            plant_n_frame,
-            text="Plant (n)",
-            state=("normal" if count > 0 else "disabled"),
-            command=_plant_n,
-            **_button_style(self.app),
-        )
-        if self.app:
-            self.app._apply_hover(b_plant_n)
+        b_plant_n = _pill(plant_n_frame, "Plant (n)", _plant_n, variant="success",
+                          state=("normal" if count > 0 else "disabled"))
         b_plant_n.pack(side="left")
 
         # "Plant ALL" ---------------------------------------------------------
@@ -866,15 +787,8 @@ class InventoryPopup(Toplevel):
                         self.on_seed_selected(seed)
                 self._render_seeds_page()
 
-        b_all = tk.Button(
-            btn_row,
-            text="Plant ALL",
-            state=("normal" if count > 0 else "disabled"),
-            command=_plant_all,
-            **_button_style(self.app),
-        )
-        if self.app:
-            self.app._apply_hover(b_all)
+        b_all = _pill(btn_row, "Plant ALL", _plant_all, variant="success",
+                      state=("normal" if count > 0 else "disabled"))
         b_all.pack(side="left")
     
     def _seed_matches_group(self, seed, kind, source_id, donor_id):

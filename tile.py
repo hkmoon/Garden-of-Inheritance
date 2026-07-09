@@ -9,12 +9,34 @@ import random
 import tkinter as tk
 from plant import Plant
 from garden_of_inheritance import theme
+from garden_of_inheritance import widgets
 
 try:
     from PIL import Image as _PilImage, ImageTk as _PilImageTk
     _PIL_AVAILABLE = True
 except ImportError:
     _PIL_AVAILABLE = False
+
+
+_SOIL_GRAD_CACHE = {}
+
+
+def _soil_gradient_photo(w, h):
+    key = (int(w), int(h))
+    photo = _SOIL_GRAD_CACHE.get(key)
+    if photo is None:
+        try:
+            from PIL import ImageTk
+            pil = widgets.rounded_grad((int(w) * widgets.SCALE, int(h) * widgets.SCALE),
+                                       8 * widgets.SCALE,
+                                       widgets._hx(theme.TILE_SOIL_GRAD[0]),
+                                       widgets._hx(theme.TILE_SOIL_GRAD[1]))
+            pil = pil.resize((int(w), int(h)), _PilImage.LANCZOS)
+            photo = ImageTk.PhotoImage(pil)
+            _SOIL_GRAD_CACHE[key] = photo
+        except Exception:
+            return None
+    return photo
 
 
 def _find_base_image(pil_imgs, mode, season, vi, bucket):
@@ -198,6 +220,15 @@ class TileCanvas(tk.Canvas):
             outline=theme.TILE_SOIL_EDGE, width=2,
             tags="bg"
         )
+        # Subtle soil gradient behind the texture (soil region only). Falls back
+        # to the flat bg_rect above if image creation fails.
+        self._soil_grad_photo = _soil_gradient_photo(self.w - 5, self.h - 4 - grass_h)
+        if self._soil_grad_photo is not None:
+            self._soil_grad_item = self.create_image(
+                2, grass_h, anchor="nw", image=self._soil_grad_photo, tags="bg"
+            )
+        else:
+            self._soil_grad_item = None
         self.grass_strip = self.create_rectangle(
             2, 2, self.w - 3, grass_h + 2,
             fill=theme.TILE_GRASS_TOP,
@@ -222,6 +253,12 @@ class TileCanvas(tk.Canvas):
         self.sel_rect = self.create_rectangle(
             1, 1, self.w - 1, self.h - 1,
             outline="", width=3,
+            tags="sel_border"
+        )
+        # Softer outer halo ring behind sel_rect for the selection glow.
+        self.sel_glow = self.create_rectangle(
+            1, 1, self.w - 1, self.h - 1,
+            outline="", width=6,
             tags="sel_border"
         )
     
@@ -434,10 +471,13 @@ class TileCanvas(tk.Canvas):
         # Selection border — only raise when visible (tag_raise is expensive)
         try:
             if self.selected:
-                self.itemconfig(self.sel_rect, outline=theme.SELECTION_GOLD)
+                self.itemconfig(self.sel_rect, outline=theme.SELECTION_GOLD, width=3)
+                self.itemconfig(self.sel_glow, outline=theme.SELECTION_GOLD)
+                self.tag_raise(self.sel_glow)
                 self.tag_raise(self.sel_rect)
             else:
                 self.itemconfig(self.sel_rect, outline="")
+                self.itemconfig(self.sel_glow, outline="")
         except Exception:
             pass
 

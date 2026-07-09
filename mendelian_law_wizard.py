@@ -13,6 +13,14 @@ import tkinter as tk
 from tkinter import ttk
 import platform
 
+from garden_of_inheritance import widgets
+
+
+def _wiz_pill(parent, text, command, variant="wood"):
+    """Create a pill-styled nav/action button (identical on every platform)."""
+    return widgets.make_button(parent, text=text, command=command,
+                               variant=variant, height=36, font_size=12)
+
 
 class MendelianLawWizard(tk.Toplevel):
     """
@@ -231,24 +239,8 @@ class MendelianLawWizard(tk.Toplevel):
         # navigation
         nav = tk.Frame(p, bg=self.BG)
         nav.pack(fill="x", padx=20, pady=14)
-        if self._is_mac:
-            ttk.Button(nav, text="Cancel", style="Wiz.TButton",
-                       command=self.destroy).pack(side="right", padx=(8, 0))
-            ttk.Button(nav, text="Next  \u2192", style="Wiz.Primary.TButton",
-                       command=lambda: self._show_page(2)).pack(side="right")
-        else:
-            tk.Button(nav, text="Cancel",
-                      font=self.FONT_BOLD, bg=self.BTN_BG,
-                      activebackground=self.BTN_ACTIVE,
-                      relief="flat", bd=0, padx=14, pady=6,
-                      command=self.destroy).pack(side="right", padx=(8, 0))
-            tk.Button(nav, text="Next  \u2192",
-                      font=self.FONT_BOLD,
-                      bg=self.BTN_PRIMARY, fg=self.BTN_PRIMARY_FG,
-                      activebackground="#5C2810",
-                      activeforeground="white",
-                      relief="flat", bd=0, padx=14, pady=6,
-                      command=lambda: self._show_page(2)).pack(side="right")
+        _wiz_pill(nav, "Cancel", self.destroy, "muted").pack(side="right", padx=(8, 0))
+        _wiz_pill(nav, "Next  \u2192", lambda: self._show_page(2), "wood").pack(side="right")
 
     def _make_law_card(self, parent, law):
         """Create a clickable card for one law. Returns the outer frame."""
@@ -340,42 +332,12 @@ class MendelianLawWizard(tk.Toplevel):
         sep.pack(fill="x", side="bottom")
         nav = tk.Frame(p, bg=self.BG)
         nav.pack(fill="x", padx=20, pady=10, side="bottom")
-        if self._is_mac:
-            self._p2_back_btn = ttk.Button(nav, text="\u2190  Back",
-                                           style="Wiz.TButton",
-                                           command=self._go_back)
-            self._p2_back_btn.pack(side="left")
-            ttk.Button(nav, text="Cancel", style="Wiz.TButton",
-                       command=self.destroy).pack(side="right", padx=(8, 0))
-            self._p2_unlock_btn = ttk.Button(nav, text="\U0001f513  Unlock",
-                                             style="Wiz.Primary.TButton",
-                                             command=self._on_unlock)
-            self._p2_unlock_btn.pack(side="right")
-            try:
-                self._p2_unlock_btn.state(["disabled"])
-            except Exception:
-                pass
-        else:
-            self._p2_back_btn = tk.Button(nav, text="\u2190  Back",
-                      font=self.FONT_BOLD, bg=self.BTN_BG,
-                      activebackground=self.BTN_ACTIVE,
-                      relief="flat", bd=0, padx=14, pady=6,
-                      command=self._go_back)
-            self._p2_back_btn.pack(side="left")
-            tk.Button(nav, text="Cancel",
-                      font=self.FONT_BOLD, bg=self.BTN_BG,
-                      activebackground=self.BTN_ACTIVE,
-                      relief="flat", bd=0, padx=14, pady=6,
-                      command=self.destroy).pack(side="right", padx=(8, 0))
-            self._p2_unlock_btn = tk.Button(
-                nav, text="\U0001f513  Unlock",
-                font=self.FONT_BOLD,
-                bg=self.BTN_PRIMARY, fg=self.BTN_PRIMARY_FG,
-                activebackground="#5C2810", activeforeground=self.BTN_PRIMARY_FG,
-                relief="flat", bd=0, padx=14, pady=6,
-                state="disabled",
-                command=self._on_unlock)
-            self._p2_unlock_btn.pack(side="right")
+        self._p2_back_btn = _wiz_pill(nav, "←  Back", self._go_back, "muted")
+        self._p2_back_btn.pack(side="left")
+        _wiz_pill(nav, "Cancel", self.destroy, "muted").pack(side="right", padx=(8, 0))
+        self._p2_unlock_btn = _wiz_pill(nav, "🔓  Unlock", self._on_unlock, "success")
+        self._p2_unlock_btn.pack(side="right")
+        self._p2_unlock_btn.configure(state="disabled")
 
         # scrollable canvas for the body content
         self._p2_canvas_frame = tk.Frame(p, bg=self.BG)
@@ -430,21 +392,11 @@ class MendelianLawWizard(tk.Toplevel):
         # Restore nav buttons to default state
         try:
             self._p2_back_btn.pack(side="left")
-            if self._is_mac:
-                self._p2_unlock_btn.configure(
-                    text="\U0001f513  Unlock",
-                    command=self._on_unlock,
-                    style="Wiz.Primary.TButton")
-                try:
-                    self._p2_unlock_btn.state(["disabled"])
-                except Exception:
-                    pass
-            else:
-                self._p2_unlock_btn.configure(
-                    text="\U0001f513  Unlock",
-                    command=self._on_unlock,
-                    bg=self.BTN_PRIMARY, fg=self.BTN_PRIMARY_FG,
-                    state="disabled")
+            self._p2_unlock_btn.configure(
+                text="🔓  Unlock",
+                command=self._on_unlock,
+                variant="success",
+                state="disabled")
         except Exception:
             pass
         # Reset selections when going back
@@ -989,19 +941,7 @@ class MendelianLawWizard(tk.Toplevel):
             for i in range(pairs_n)
         )
         if hasattr(self, "_p2_unlock_btn"):
-            if self._is_mac:
-                try:
-                    if ready:
-                        self._p2_unlock_btn.state(["!disabled"])
-                    else:
-                        self._p2_unlock_btn.state(["disabled"])
-                except Exception:
-                    pass
-            else:
-                self._p2_unlock_btn.configure(
-                    state="normal" if ready else "disabled",
-                    bg=self.BTN_PRIMARY if ready else "#B8A888",
-                    fg="white")
+            self._p2_unlock_btn.configure(state="normal" if ready else "disabled")
 
     # =========================================================================
     # Unlock action
@@ -1344,46 +1284,18 @@ class MendelianLawWizard(tk.Toplevel):
 
         # ── swap nav button on outcome ────────────────────────────────────
         try:
-            if self._is_mac:
-                if success:
-                    self._p2_unlock_btn.configure(
-                        text="\u2714  Close",
-                        command=self.destroy,
-                        style="Wiz.Success.TButton")
-                    try:
-                        self._p2_unlock_btn.state(["!disabled"])
-                    except Exception:
-                        pass
-                else:
-                    self._p2_unlock_btn.configure(
-                        text="\u21ba  Try Again",
-                        command=self._go_back,
-                        style="Wiz.Danger.TButton")
-                    try:
-                        self._p2_unlock_btn.state(["!disabled"])
-                    except Exception:
-                        pass
+            if success:
+                self._p2_unlock_btn.configure(
+                    text="✔  Close",
+                    command=self.destroy,
+                    variant="success",
+                    state="normal")
             else:
-                if success:
-                    self._p2_unlock_btn.configure(
-                        text="\u2714  Close",
-                        command=self.destroy,
-                        bg="#3AB050",
-                        fg="#FFFFFF",
-                        activebackground="#2A8040",
-                        activeforeground="#FFFFFF",
-                        state="normal",
-                    )
-                else:
-                    self._p2_unlock_btn.configure(
-                        text="\u21ba  Try Again",
-                        command=self._go_back,
-                        bg="#D04040",
-                        fg="#FFFFFF",
-                        activebackground="#A02020",
-                        activeforeground="#FFFFFF",
-                        state="normal",
-                    )
+                self._p2_unlock_btn.configure(
+                    text="↺  Try Again",
+                    command=self._go_back,
+                    variant="danger",
+                    state="normal")
         except Exception:
             pass
 

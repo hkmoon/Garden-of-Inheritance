@@ -106,6 +106,7 @@ from garden_of_inheritance.persistence import (
     upsert_archive_snapshot,
 )
 from garden_of_inheritance import theme
+from garden_of_inheritance import widgets
 
 # Wildlife (bees, butterflies, Bruchus pisi) — optional, fails silently if missing
 try:
@@ -2398,35 +2399,12 @@ class GardenApp:
         self.btn_font = ("Segoe UI", 12)
 
         def make_icon_button(parent, text, icon_name, command):
-            # base style for sidebar buttons derived from main style
-            style = dict(self.button_style)
-            style["bg"] = theme.WOOD_MID
-            style["fg"] = self.button_fg
-            style["activebackground"] = theme.BUTTON_HOVER
-            style["activeforeground"] = self.button_fg
-
-            try:
-                img = tk.PhotoImage(file=os.path.join(icon_loader.ICONS_DIR, icon_name))
-                btn = tk.Button(
-                    parent,
-                    text=text,
-                    image=img,
-                    compound="left",
-                    command=command,
-                    **style,
-                )
-                btn.image = img
-            except Exception as e:
-                print(f"⚠ Could not load icon {icon_name}: {e}")
-                btn = tk.Button(
-                    parent,
-                    text=text,
-                    command=command,
-                    **style,
-                )
-
-            self._apply_hover(btn)
-            btn.pack(anchor="nw", pady=2, fill="x")
+            variant = {"Pollinate": "success", "Remove plant": "danger"}.get(text, "wood")
+            icon_path = os.path.join(icon_loader.ICONS_DIR, icon_name)
+            btn = widgets.make_button(parent, text=text, command=command,
+                                      variant=variant, icon_path=icon_path,
+                                      height=38, font_size=11, min_width=150)
+            btn.pack(anchor="nw", pady=3, fill="x")
             return btn
 
         self.water_btn     = make_icon_button(self.left_actions, "Water",         "can.png",       self._on_water_selected)
@@ -2496,8 +2474,8 @@ class GardenApp:
             right_panel,
             text="",
             font=(theme.DISPLAY_FONT, 19, "bold"),
-            bg=theme.PHASE_BG,
-            fg=theme.PHASE_FG,
+            bg=theme.WOOD_MID,
+            fg=theme.TEXT_LIGHT,
             padx=10,
             pady=8
         )
@@ -2530,134 +2508,80 @@ class GardenApp:
         inventory_left = tk.Frame(self.inventory_row, bg=self.panel_bg)
         inventory_left.pack(side="left", anchor="w")
 
-        # Seeds label
-        self.seed_label = tk.Label(
-            inventory_left,
-            textvariable=self.seed_counter_var,
-            font=self.font_seed,
-            bg=self.panel_bg,
-            fg=theme.TEXT_PRIMARY
-        )
-        self.seed_label.pack(side="left", padx=(0, 12))
+        # Seeds label (game-style chip)
+        self.seed_label = tk.Label(inventory_left, bg=self.panel_bg)
+        self.seed_label.pack(side="left", padx=(0, 10))
+        self._set_chip(self.seed_label, "Seeds  0", icon="gold")
 
-        # Starter label
-        self.starter_label = tk.Label(
-            inventory_left,
-            textvariable=self.starter_var,
-            font=self.font_seed,
-            bg=self.panel_bg,
-            fg=theme.TEXT_PRIMARY
-        )
-        self.starter_label.pack(side="left", padx=(0, 20))
+        # Starter label (game-style chip)
+        self.starter_label = tk.Label(inventory_left, bg=self.panel_bg)
+        self.starter_label.pack(side="left", padx=(0, 16))
+        self._set_chip(self.starter_label, "Starter  0", icon="seed")
 
         # ALL BUTTONS (moved from topbar)
         btn_kwargs = dict(self.button_style)
         
         # Observatory button with custom icon
-        try:
-            observatory_icon = tk.PhotoImage(file=os.path.join(icon_loader.ICONS_DIR, "observatory.png"))
-            self.observatory_btn = tk.Button(
-                inventory_left,
-                text=" Observatory",
-                image=observatory_icon,
-                compound="left",
-                command=lambda: (
-                    self.temp_tracker.open_observatory() if hasattr(self, 'temp_tracker') and self.temp_tracker
-                    else messagebox.showinfo("Observatory", "Temperature tracker not available")
-                ),
-                **btn_kwargs,
-            )
-            self.observatory_btn.image = observatory_icon  # Keep reference
-        except Exception as e:
-            print(f"⚠ Could not load observatory icon: {e}")
-            self.observatory_btn = tk.Button(
-                inventory_left,
-                text="🔭 Observatory",
-                command=lambda: (
-                    self.temp_tracker.open_observatory() if hasattr(self, 'temp_tracker') and self.temp_tracker
-                    else messagebox.showinfo("Observatory", "Temperature tracker not available")
-                ),
-                **btn_kwargs,
-            )
-        self._apply_hover(self.observatory_btn)
+        self.observatory_btn = widgets.make_button(
+            inventory_left,
+            text="Observatory",
+            icon_path=os.path.join(icon_loader.ICONS_DIR, "observatory.png"),
+            command=lambda: (
+                self.temp_tracker.open_observatory() if hasattr(self, 'temp_tracker') and self.temp_tracker
+                else messagebox.showinfo("Observatory", "Temperature tracker not available")
+            ),
+            height=36, font_size=11,
+        )
         self.observatory_btn.pack(side="left", padx=2)
 
         # Pause/Resume button
-        self.pause_btn = tk.Button(
+        self.pause_btn = widgets.make_button(
             inventory_left,
             text=("▶ Resume" if not self.running else "⏸ Pause"),
             command=self._toggle_run,
-            **btn_kwargs,
+            height=36, font_size=11,
         )
-        self._apply_hover(self.pause_btn)
         self.pause_btn.pack(side="left", padx=2)
 
         # Fast Forward button
-        self.fast_btn = tk.Button(
+        self.fast_btn = widgets.make_button(
             inventory_left,
             text="FF ▶▶",
             command=self._on_fast_forward,
-            **btn_kwargs,
+            height=36, font_size=11,
         )
-        self._apply_hover(self.fast_btn)
         self.fast_btn.pack(side="left", padx=2)
 
         # Speed button moved to Game Settings menu
 
         # Next Phase button
-        self.next_phase_btn = tk.Button(
+        self.next_phase_btn = widgets.make_button(
             inventory_left,
             text="Next ⏵1h",
             command=self._on_next_phase,
-            **btn_kwargs,
+            height=36, font_size=11,
         )
-        self._apply_hover(self.next_phase_btn)
         self.next_phase_btn.pack(side="left", padx=2)
 
         # Plant Seeds button with shovel icon
-        try:
-            plant_icon = tk.PhotoImage(file=os.path.join(icon_loader.ICONS_DIR, "shovel.png"))
-            self.plant_seeds_btn = tk.Button(
-                inventory_left,
-                text=" Plant",
-                image=plant_icon,
-                compound="left",
-                command=self._on_plant_seed_quick,
-                **btn_kwargs,
-            )
-            self.plant_seeds_btn.image = plant_icon  # Keep reference
-        except Exception as e:
-            print(f"⚠ Could not load shovel icon: {e}")
-            self.plant_seeds_btn = tk.Button(
-                inventory_left,
-                text="Plant 🌱",
-                command=self._on_plant_seed_quick,
-                **btn_kwargs,
-            )
-        self._apply_hover(self.plant_seeds_btn)
+        self.plant_seeds_btn = widgets.make_button(
+            inventory_left,
+            text="Plant",
+            icon_path=os.path.join(icon_loader.ICONS_DIR, "shovel.png"),
+            command=self._on_plant_seed_quick,
+            variant="success",
+            height=36, font_size=11,
+        )
         self.plant_seeds_btn.pack(side="left", padx=2)
 
         # Water All button with watering can icon
-        try:
-            water_all_icon = tk.PhotoImage(file=os.path.join(icon_loader.ICONS_DIR, "can.png"))
-            self.water_all_btn = tk.Button(
-                inventory_left,
-                text=" Water All",
-                image=water_all_icon,
-                compound="left",
-                command=self._on_water_all,
-                **btn_kwargs,
-            )
-            self.water_all_btn.image = water_all_icon  # Keep reference
-        except Exception as e:
-            print(f"⚠ Could not load can icon: {e}")
-            self.water_all_btn = tk.Button(
-                inventory_left,
-                text="Water All 💧",
-                command=self._on_water_all,
-                **btn_kwargs,
-            )
-        self._apply_hover(self.water_all_btn)
+        self.water_all_btn = widgets.make_button(
+            inventory_left,
+            text="Water All",
+            icon_path=os.path.join(icon_loader.ICONS_DIR, "can.png"),
+            command=self._on_water_all,
+            height=36, font_size=11,
+        )
         self.water_all_btn.pack(side="left", padx=2)
         
         # Temperature measurement button
@@ -2718,30 +2642,38 @@ class GardenApp:
             fg=theme.TEXT_PRIMARY
         ).pack(side="left", anchor="w", padx=(0, 10))
 
-        # The actual laws status text
-        # IMPORTANT: keep the name self.law_status_label because _update_law_status_label() uses it
-        self.law_status_label = tk.Label(
-            law_left,
-            textvariable=self.law_status_var,
-            font=(theme.UI_FONT, 13, "bold"),
-            bg=self.panel_bg,
-            fg=theme.TEXT_MUTED,
-            anchor="w",
-            justify="left"
-        )
-        self.law_status_label.pack(side="left", anchor="w", padx=(0, 10))
+        # The actual laws status as game-style law pills
+        self.law_pills_frame = tk.Frame(law_left, bg=self.panel_bg)
+        self.law_pills_frame.pack(side="left", anchor="w", padx=(0, 10))
+        self.law_pill_labels = []
+        for _ in range(3):
+            lbl = tk.Label(self.law_pills_frame, bg=self.panel_bg)
+            lbl.pack(side="left", padx=(0, 8))
+            self.law_pill_labels.append(lbl)
+        self._law_pill_imgs = []
 
         # Unlock button (left, next to laws)
-        self.btn_test_laws = tk.Button(
+        self.btn_test_laws = widgets.make_button(
             law_left,
             text="Unlock",
+            variant="success",
             command=self._test_mendelian_laws_now,
-            **self.button_style
+            height=34, font_size=12,
         )
-        self._apply_hover(self.btn_test_laws)
         self.btn_test_laws.pack(side="left", padx=(8, 10))
 
     # ---------- Rendering ----------
+
+    def _set_chip(self, label, text, icon=None):
+        try:
+            pil = widgets.chip(text, icon=icon, height=30)
+            photo = ImageTk.PhotoImage(pil)
+            if not hasattr(self, "_chip_imgs"):
+                self._chip_imgs = {}
+            self._chip_imgs[str(label)] = photo  # keep ref
+            label.configure(image=photo, text="", bg=self.panel_bg)
+        except Exception:
+            label.configure(text=text)  # fallback to plain text
 
     def _update_law_status_label(self):
         """Refresh the top-bar 'Mendelian laws' string based on ever_discovered flags."""
@@ -2791,6 +2723,25 @@ class GardenApp:
                 else:
                     # at least one discovered -> normal black text
                     self.law_status_label.configure(fg=theme.TEXT_PRIMARY)
+
+            # Render the game-style law pills (preserving the ratio suffixes)
+            pill_texts = [
+                "Law of Dominance",
+                f"Law of Segregation{seg_suffix}",
+                f"Law of Independent Assortment{ind_suffix}",
+            ]
+            pill_done = [law1_done, law2_done, law3_done]
+            self._law_pill_imgs = []
+            for i, lbl in enumerate(getattr(self, "law_pill_labels", [])):
+                try:
+                    photo = ImageTk.PhotoImage(
+                        widgets.law_pill(pill_texts[i], pill_done[i], height=30))
+                    self._law_pill_imgs.append(photo)
+                    lbl.configure(image=photo, text="")
+                except Exception:
+                    lbl.configure(
+                        image="",
+                        text=("✓ " if pill_done[i] else "○ ") + pill_texts[i])
 
         except Exception:
             # Don’t crash the simulation just because of a cosmetic label
@@ -2855,6 +2806,12 @@ class GardenApp:
                 self.seed_counter_var.set(f"Seeds: {len(self.harvest_inventory)}")
             except Exception:
                 pass
+
+        # Redraw the game-style chips to reflect the new counts
+        if hasattr(self, "starter_label"):
+            self._set_chip(self.starter_label, f"Starter  {self.available_seeds}", icon="seed")
+        if hasattr(self, "seed_label"):
+            self._set_chip(self.seed_label, f"Seeds  {len(self.harvest_inventory)}", icon="gold")
 
         # --- Update Mendelian law status in top bar ---
         self._update_law_status_label()

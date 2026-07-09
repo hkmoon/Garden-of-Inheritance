@@ -10,6 +10,9 @@ from tkinter import Canvas
 from PIL import Image, ImageTk
 import math
 
+from garden_of_inheritance import theme
+from garden_of_inheritance import widgets
+
 
 class EmasculationDialog(tk.Toplevel):
     """
@@ -29,7 +32,8 @@ class EmasculationDialog(tk.Toplevel):
             callback: Function to call when emasculation is complete (success: bool)
         """
         super().__init__(parent)
-        
+        self.configure(bg=theme.PANEL_BG)
+
         self.callback = callback
         self.flower_color = flower_color
         self.anthers_removed = 0
@@ -205,12 +209,13 @@ class EmasculationDialog(tk.Toplevel):
         button_frame = tk.Frame(self)
         button_frame.pack(fill="x", padx=10, pady=(0, 10))
         
-        self.cancel_btn = tk.Button(
+        self.cancel_btn = widgets.make_button(
             button_frame,
             text="Cancel",
             command=self._on_cancel,
-            font=("Segoe UI", 10),
-            width=10
+            variant="muted",
+            height=34,
+            font_size=12,
         )
         self.cancel_btn.pack(side="right", padx=5)
     
