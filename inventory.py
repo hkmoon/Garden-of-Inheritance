@@ -19,17 +19,6 @@ from plant import Plant, STAGE_NAMES
 import icon_loader
 
 
-def _button_style(app, **overrides):
-    """Merge the app's shared button style with local overrides."""
-    style = dict(getattr(app, "button_style", {}) or {})
-    style.update(overrides)
-    return style
-
-
-def _button_fg(app):
-    return getattr(app, "button_fg", theme.BUTTON_TEXT_FG)
-
-
 def _pill(parent, text, command, variant="wood", state="normal", **_ignore):
     """Toolkit pill button; replaces the platform-styled tk.Button pairs."""
     b = widgets.make_button(parent, text=text, command=command, variant=variant,
@@ -929,8 +918,6 @@ class PollenChooserPopup(Toplevel):
     # ── Build ────────────────────────────────────────────────────────────────
 
     def _build(self):
-        bstyle = self.app.button_style if self.app else {}
-
         outer = tk.Frame(self, padx=10, pady=10, bg=theme.PANEL_BG)
         outer.pack(fill="both", expand=True)
 
@@ -938,17 +925,12 @@ class PollenChooserPopup(Toplevel):
         header = tk.Frame(outer, bg=theme.PANEL_BG)
         header.pack(fill="x", pady=(0, 6))
 
-        btn_prev = tk.Button(header, text="◀ Prev", command=self._prev, **bstyle)
-        btn_next = tk.Button(header, text="Next ▶", command=self._next, **bstyle)
-        if self.app:
-            self.app._apply_hover(btn_prev)
-            self.app._apply_hover(btn_next)
+        btn_prev = _pill(header, "◀ Prev", self._prev)
+        btn_next = _pill(header, "Next ▶", self._next)
 
         self._page_lbl = tk.Label(header, text="", font=(theme.UI_FONT, 11), bg=theme.PANEL_BG, fg=theme.TEXT_PRIMARY)
 
-        btn_close = tk.Button(header, text="✕", command=self.destroy, **bstyle)
-        if self.app:
-            self.app._apply_hover(btn_close)
+        btn_close = _pill(header, "✕", self.destroy, variant="muted")
 
         self._page_lbl.pack(side="left", padx=8)
         btn_prev.pack(side="left")
@@ -1028,7 +1010,6 @@ class PollenChooserPopup(Toplevel):
             self._render_card(idx, source_id, packets, today)
 
     def _render_card(self, idx, source_id, packets, today):
-        bstyle = _button_style(self.app)
         r, c   = idx // 3, idx % 3
 
         # No fixed size — let content determine height so Use button is never clipped
@@ -1055,22 +1036,7 @@ class PollenChooserPopup(Toplevel):
                 pass
             self._render()
 
-        btn_x = tk.Button(
-            hdr,
-            text="✕",
-            width=2,
-            command=_discard,
-            **_button_style(
-                self.app,
-                bg=theme.BUTTON_DANGER_BG,
-                activebackground=theme.BUTTON_DANGER_HOVER,
-                fg=_button_fg(self.app),
-                activeforeground=_button_fg(self.app),
-            ),
-        )
-        if self.app:
-            self.app._apply_hover(btn_x)
-            btn_x._hover_bg = theme.BUTTON_DANGER_HOVER
+        btn_x = _pill(hdr, "✕", _discard, variant="danger")
         btn_x.pack(side="right")
 
         # ── Icon row: flower icon + anther icon ──────────────────────────────
@@ -1164,11 +1130,8 @@ class PollenChooserPopup(Toplevel):
         info_row.pack(fill="x", pady=(4, 0))
 
         # Use button — right side, aligned under the ✕
-        btn_use = tk.Button(info_row, text="Use",
-                            state=("normal" if pkt else "disabled"),
-                            command=_use if pkt else None, **bstyle)
-        if self.app:
-            self.app._apply_hover(btn_use)
+        btn_use = _pill(info_row, "Use", (_use if pkt else None),
+                        state=("normal" if pkt else "disabled"))
         btn_use.pack(side="right")
 
         # Count text — left side

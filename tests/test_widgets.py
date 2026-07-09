@@ -151,24 +151,5 @@ class TestPillButton(unittest.TestCase):
         self.assertIsInstance(b, self.w.PillButton)
 
 
-class TestPanelCard(unittest.TestCase):
-    def setUp(self):
-        from garden_of_inheritance import widgets
-        self.w = widgets
-
-    def test_panel_card_returns_image_and_bbox(self):
-        img, bbox = self.w.panel_card(300, 200, title="Inventory")
-        self.assertEqual(img.mode, "RGBA")
-        self.assertEqual(len(bbox), 4)
-        # content region is inside the card
-        self.assertGreaterEqual(bbox[0], 0)
-        self.assertLess(bbox[2], img.size[0])
-
-    def test_panel_card_no_title_has_taller_content(self):
-        _, bbox_titled = self.w.panel_card(300, 200, title="X")
-        _, bbox_plain = self.w.panel_card(300, 200, title=None)
-        self.assertLess(bbox_plain[1], bbox_titled[1])
-
-
 if __name__ == "__main__":
     unittest.main()

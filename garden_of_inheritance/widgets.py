@@ -389,37 +389,3 @@ def make_button(parent, text="", command=None, *, variant="wood", icon_path=None
     return PillButton(parent, text=text, command=command, variant=variant,
                       icon_path=icon_path, min_width=min_width, height=height,
                       font_size=font_size)
-
-
-def panel_card(width, height, *, title=None, title_font_size=16):
-    key = ("panel_card", width, height, title, title_font_size, SCALE)
-
-    def build():
-        w, h = width * SCALE, height * SCALE
-        radius = 18 * SCALE
-        card = rounded_grad((w, h), radius, _hx(theme.PANEL_GRAD[0]), _hx(theme.PANEL_GRAD[1]))
-        d = ImageDraw.Draw(card)
-        d.rounded_rectangle([1, 1, w - 2, h - 2], radius=radius - 1,
-                            outline=_hx(theme.PANEL_BORDER), width=3 * SCALE)
-        header_h = 0
-        if title:
-            header_h = 46 * SCALE
-            d.rounded_rectangle([1, 1, w - 2, header_h], radius=radius - 1, fill=_hx(theme.WOOD_MID))
-            d.rectangle([1, header_h - radius, w - 2, header_h], fill=_hx(theme.WOOD_MID))
-            font = _load_font(theme.DISPLAY_FONT, title_font_size, bold=True)
-            d.text((18 * SCALE, (header_h - title_font_size * SCALE) / 2 - 2 * SCALE),
-                   title, font=font, fill=_hx(theme.TEXT_LIGHT))
-        shadow, pad = soft_shadow((w, h), radius, blur=12)
-        canvas = Image.new("RGBA", (w + pad * 2, h + pad * 2), (0, 0, 0, 0))
-        canvas.alpha_composite(shadow, (0, int(pad * 0.6)))
-        canvas.alpha_composite(card, (pad, pad))
-        # content bbox in CSS px, relative to canvas top-left
-        cx = (pad + 14 * SCALE) // SCALE
-        cy = (pad + header_h + 12 * SCALE) // SCALE
-        cw = (pad + w - 14 * SCALE) // SCALE
-        ch = (pad + h - 14 * SCALE) // SCALE
-        canvas = canvas.resize(
-            (max(1, canvas.width // SCALE), max(1, canvas.height // SCALE)), Image.LANCZOS)
-        return canvas, (int(cx), int(cy), int(cw), int(ch))
-
-    return _cache_get(key, build)
