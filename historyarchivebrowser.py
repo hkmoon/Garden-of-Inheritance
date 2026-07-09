@@ -36,7 +36,17 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 # Local
-from icon_loader import *
+import icon_loader
+from garden_of_inheritance import theme
+from garden_of_inheritance.laws import (
+    LAW1_MIN_F1,
+    LAW2_DOM_FRAC_MAX,
+    LAW2_DOM_FRAC_MIN,
+    LAW2_MIN_N,
+    LAW3_CHI2_MAX,
+    LAW3_MIN_N,
+    test_mendelian_laws as shared_test_mendelian_laws,
+)
 
 
 # ============================================================================
@@ -58,27 +68,7 @@ except Exception:
 # ============================================================================
 
 
-import functools
-import math
-import os
-import re
-import traceback
-from collections import Counter
-from itertools import combinations
-import platform
 
-import tkinter as tk
-from tkinter import messagebox, ttk
-
-from icon_loader import *
-
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-EXPORT_DIR = os.path.join(ROOT_DIR, "export")
-try:
-    os.makedirs(EXPORT_DIR, exist_ok=True)
-except Exception:
-    pass
-    
 def _test_mendelian_laws_now(self):
     try:
         # keep archive in sync (same prep as TIE)
@@ -102,678 +92,29 @@ def _test_mendelian_laws_now(self):
             print("Law test failed:", e)
 
 def test_mendelian_laws(app, archive=None, pid=None, allow_credit=True, toast=True):
-    """Run Mendelian-law detection using the *exact same rules* as the Trait Inheritance Explorer.
-
-    This is the single shared entry point used by:
-      - the main UI "Unlock" button (GardenApp)
-      - the Trait Inheritance Explorer export/test button
-
-    Returns: {"law1": bool, "law2": bool, "law3": bool, "new": ["law1","law2","law3"]}
-    Also updates app.law*_ever_discovered and app.law2_ratio_ui / app.law3_ratio_ui, and refreshes
-    app._update_law_status_label() when present.
-    """
-
-    # Use existing archive unless provided
-    archive = archive if archive is not None else getattr(app, "archive", None)
-    if not isinstance(archive, dict):
-        return {"law1": False, "law2": False, "law3": False, "new": []}
-    plants = archive.get("plants", {})
-    if not isinstance(plants, dict) or not plants:
-        return {"law1": False, "law2": False, "law3": False, "new": []}
-
-    # Respect genotype reveal session rule (no credit once alleles were revealed)
     if (not allow_credit) or bool(getattr(app, "_genotype_revealed", False)):
         return {"law1": False, "law2": False, "law3": False, "new": []}
-
-    # If pid wasn't provided, try to infer it like the main UI would.
-    if pid in (None, "", -1):
-        pid = getattr(app, "law_context_pid", None)
-
-    # Robust snapshot fetch (string/int keys)
-    def _get_snap_local(pid_):
-        if pid_ in (None, "", -1):
-            return None
-        # try exact
-        if pid_ in plants:
-            return plants.get(pid_)
-        # try str/int forms
-        try:
-            si = str(pid_)
-            if si in plants:
-                return plants.get(si)
-        except Exception:
-            pass
-        try:
-            ii = int(pid_)
-            if ii in plants:
-                return plants.get(ii)
-        except Exception:
-            pass
-        return None
-
-    snap = _get_snap_local(pid)
-    if not snap:
-        return {"law1": False, "law2": False, "law3": False, "new": []}
-
-    # ---- helper: parent extraction (same as HistoryArchiveBrowser._parents_from_snapshot) ----
-    def _parents_from_snapshot(snap_obj):
-        if not isinstance(snap_obj, dict):
-            return (getattr(snap_obj, "mother_id", None), getattr(snap_obj, "father_id", None))
-
-        MOTHER_KEYS = [
-            "mother_id","mother","maternal_id","mom_id",
-            "female_parent","female_id","dam_id",
-            "seed_parent_id","seed_parent","maternal_pid","female",
-        ]
-        FATHER_KEYS = [
-            "father_id","father","paternal_id","dad_id",
-            "male_parent","male_id","sire_id",
-            "pollen_donor_id","pollen_source_id","pollen_parent_id","pollinator_id",
-            "pollen_donor","pollen_source","pollen",
-        ]
-        NESTED = ["pollination","cross","cross_info","seed_source","source_pod","source_cross","repro","reproduction"]
-
-        def pick(dct, keys):
-            for k in keys:
-                if isinstance(dct, dict) and k in dct and dct[k] not in (None, "", -1):
-                    return dct[k]
-            return None
-
-        mid_ = pick(snap_obj, MOTHER_KEYS)
-        fid_ = pick(snap_obj, FATHER_KEYS)
-        if mid_ is None or fid_ is None:
-            for nk in NESTED:
-                nd = snap_obj.get(nk)
-                if isinstance(nd, dict):
-                    if mid_ is None:
-                        mid_ = pick(nd, MOTHER_KEYS)
-                    if fid_ is None:
-                        fid_ = pick(nd, FATHER_KEYS)
-        return (mid_, fid_)
-
-    # ---- helpers used by the TIE law logic ----
-    def _g(s, key, default=None):
-        if isinstance(s, dict):
-            return s.get(key, default)
-        try:
-            return getattr(s, key, default)
-        except Exception:
-            return default
-
-    try:
-        mid, fid = _parents_from_snapshot(snap)
-    except Exception:
-        mid, fid = (_g(snap, "mother_id", None), _g(snap, "father_id", None))
-
-    try:
-        traits = dict(snap.get("traits", {}) or {}) if isinstance(snap, dict) else dict(getattr(snap, "traits", {}) or {})
-    except Exception:
-        traits = {}
-
-    # Snapshot lookup helper for IDs
-    def _get_arch_snap(pid_):
-        return _get_snap_local(pid_)
-
-    # ---------------------- BEGIN: copied TIE law-test logic ----------------------
-    # (This block is intentionally mirrored from HistoryArchiveBrowser._export_selected_traits)
-
-    def _geno_from_snap_law2(s):
-        try:
-            if isinstance(s, dict):
-                g = s.get("genotype") or {}
-            else:
-                g = getattr(s, "genotype", None) or {}
-        except Exception:
-            g = {}
-        return dict(g) if isinstance(g, dict) else {}
-
-    def _law1_cross_signature_for_trait(m_snap, f_snap, locus):
-        """Canonical cross signature (order-independent) for Law 1 tests."""
-        m_geno = _geno_from_snap_law2(m_snap)
-        f_geno = _geno_from_snap_law2(f_snap)
-        if not isinstance(m_geno, dict) or not isinstance(f_geno, dict):
-            return None
-
-        m_pair = m_geno.get(locus)
-        f_pair = f_geno.get(locus)
-        if not (isinstance(m_pair, (list, tuple)) and len(m_pair) >= 2):
-            return None
-        if not (isinstance(f_pair, (list, tuple)) and len(f_pair) >= 2):
-            return None
-
-        m_a1, m_a2 = m_pair[0], m_pair[1]
-        f_a1, f_a2 = f_pair[0], f_pair[1]
-
-        if not (m_a1 == m_a2 and f_a1 == f_a2):
-            return None
-        if m_a1 == f_a1:
-            return None
-
-        def _canon(pair):
-            a1, a2 = pair[0], pair[1]
-            return "".join(sorted([str(a1), str(a2)]))
-
-        return tuple(sorted([_canon(m_pair), _canon(f_pair)]))
-
-    revealed = bool(getattr(app, "_genotype_revealed", False))
-
-    law1_discovered = False
-    law1_reason = ""
-
-    law2_discovered = False
-    law2_reason = ""
-    law2_ratio_str = ""
-    law2_trait_name = ""
-
-    law3_discovered = False
-    law3_reason = ""
-    law3_ratio_str = ""
-    law3_trait_pair = ()
-
-    trait_to_locus = {
-        "flower_color":  "A",
-        "pod_color":     "Gp",
-        "seed_color":    "I",
-        "seed_shape":    "R",
-        "plant_height":  "Le",
-    }
-    law_trait_keys = ["flower_color", "pod_color", "seed_color", "seed_shape", "plant_height"]
-
-    arch_plants = plants
-
-    # ---------------- Law 1 (Dominance) ----------------
-    if not revealed:
-        mother_snap = _get_arch_snap(mid)
-        father_snap = _get_arch_snap(fid)
-
-        if mother_snap and father_snap and mid not in (None, "", -1) and fid not in (None, "", -1) and str(mid) != str(fid):
-            try:
-                m_traits = dict(mother_snap.get("traits", {}) or {}) if isinstance(mother_snap, dict) else dict(getattr(mother_snap, "traits", {}) or {})
-            except Exception:
-                m_traits = {}
-            try:
-                f_traits = dict(father_snap.get("traits", {}) or {}) if isinstance(father_snap, dict) else dict(getattr(father_snap, "traits", {}) or {})
-            except Exception:
-                f_traits = {}
-
-            m_geno = _geno_from_snap_law2(mother_snap)
-            f_geno = _geno_from_snap_law2(father_snap)
-
-            dominant_candidates = []
-
-            for tk in law_trait_keys:
-                cv = str(traits.get(tk, "")).strip()
-                mv = str(m_traits.get(tk, "")).strip()
-                fv = str(f_traits.get(tk, "")).strip()
-
-                if not (cv and mv and fv and mv != fv and (cv == mv or cv == fv)):
-                    continue
-
-                loc = trait_to_locus.get(tk)
-                if not loc:
-                    continue
-
-                cross_sig = _law1_cross_signature_for_trait(mother_snap, father_snap, loc)
-                if cross_sig is None:
-                    continue
-
-                m_pair = m_geno.get(loc)
-                f_pair = f_geno.get(loc)
-                if not (isinstance(m_pair, (list, tuple)) and len(m_pair) >= 2 and isinstance(f_pair, (list, tuple)) and len(f_pair) >= 2):
-                    continue
-
-                m_a1, m_a2 = m_pair[0], m_pair[1]
-                f_a1, f_a2 = f_pair[0], f_pair[1]
-                if not (m_a1 == m_a2 and f_a1 == f_a2):
-                    continue
-                if m_a1 == f_a1:
-                    continue
-
-                same_pheno_total = 0
-                for _cid, csnap in arch_plants.items():
-                    if isinstance(csnap, dict) and not csnap.get("alive", True):
-                        continue
-
-                    smid, sfid = _parents_from_snapshot(csnap if isinstance(csnap, dict) else {})
-                    if smid in (None, "", -1) or sfid in (None, "", -1):
-                        continue
-
-                    m_snap2 = _get_arch_snap(smid)
-                    f_snap2 = _get_arch_snap(sfid)
-                    if not m_snap2 or not f_snap2:
-                        continue
-
-                    sig2 = _law1_cross_signature_for_trait(m_snap2, f_snap2, loc)
-                    if sig2 is None or sig2 != cross_sig:
-                        continue
-
-                    try:
-                        s_traits = csnap.get("traits", {}) if isinstance(csnap, dict) else getattr(csnap, "traits", {}) or {}
-                    except Exception:
-                        s_traits = {}
-                    sv = str(s_traits.get(tk, "")).strip()
-                    if sv == cv:
-                        same_pheno_total += 1
-
-                if same_pheno_total < LAW1_MIN_F1:
-                    continue
-
-                dominant_candidates.append((tk, cv, mv, fv, same_pheno_total))
-
-            if dominant_candidates:
-                law1_discovered = True
-                tk, cv, mv, fv, sib_count = dominant_candidates[0]
-                trait_label = tk.replace("_", " ")
-                law1_reason = (
-                    f"Observed in cross #{mid} × #{fid} for trait '{trait_label}': "
-                    f"parents {mv} × {fv} → offspring {cv} "
-                    f"in at least {sib_count + 1} F1 plants (including this plant), "
-                    f"from true-breeding parental lines."
-                )
-
-    # ---------------- Law 2 (Segregation) ----------------
-    try:
-        has_parents = (mid not in (None, "", -1) and fid not in (None, "", -1))
-    except Exception:
-        has_parents = False
-
-    parent_snap_m = _get_arch_snap(mid) if has_parents else None
-    parent_snap_f = _get_arch_snap(fid) if has_parents else None
-
-    def _law2_family_signature(parent_snap, gp_m, gp_f, locus):
-        parent_geno = _geno_from_snap_law2(parent_snap)
-        if not isinstance(parent_geno, dict):
-            return None
-        p_pair = parent_geno.get(locus)
-        if not (isinstance(p_pair, (list, tuple)) and len(p_pair) >= 2):
-            return None
-        pa1, pa2 = p_pair[0], p_pair[1]
-        if pa1 == pa2:
-            return None
-
-        gm_geno = _geno_from_snap_law2(gp_m)
-        gf_geno = _geno_from_snap_law2(gp_f)
-        if not isinstance(gm_geno, dict) or not isinstance(gf_geno, dict):
-            return None
-
-        m_pair = gm_geno.get(locus)
-        f_pair = gf_geno.get(locus)
-        if not (isinstance(m_pair, (list, tuple)) and len(m_pair) >= 2):
-            return None
-        if not (isinstance(f_pair, (list, tuple)) and len(f_pair) >= 2):
-            return None
-
-        m_a1, m_a2 = m_pair[0], m_pair[1]
-        f_a1, f_a2 = f_pair[0], f_pair[1]
-        if not (m_a1 == m_a2 and f_a1 == f_a2):
-            return None
-        # REMOVED: if m_a1 == f_a1: return None
-        # This check was too restrictive - it rejected selfed true-breeding lines.
-        # Mendel used selfing to establish homozygous lines, then crossed them.
-        # As long as grandparents are homozygous and parent is heterozygous,
-        # we have valid Mendelian segregation regardless of whether grandparents
-        # came from AA × aa or from selfed AA × AA lines.
-
-        def _canon(pair):
-            a1, a2 = pair[0], pair[1]
-            return "".join(sorted([str(a1), str(a2)]))
-
-        return tuple(sorted([_canon(m_pair), _canon(f_pair)]))
-
-    def _get_grandparents_for_parent(parent_snap):
-        try:
-            pmid, pfid = _parents_from_snapshot(parent_snap)
-        except Exception:
-            pmid, pfid = (_g(parent_snap, "mother_id", None), _g(parent_snap, "father_id", None))
-        gp_m = _get_arch_snap(pmid)
-        gp_f = _get_arch_snap(pfid)
-        return gp_m, gp_f
-
-    gp_m = gp_f = None
-    parent_snap = None
-    parent_traits = None
-
-    # Choose a representative "F1 parent" for Law2/3: prefer selfing if possible else sib-mating
-    if not revealed and parent_snap_m and parent_snap_f:
-        # If selfed: mother==father -> parent is that plant
-        if str(mid) == str(fid):
-            parent_snap = parent_snap_m
-        else:
-            # otherwise pick mother as "parent" reference; Law2/3 code uses family signatures anyway
-            parent_snap = parent_snap_m
-
-        try:
-            parent_traits = dict(parent_snap.get("traits", {}) or {}) if isinstance(parent_snap, dict) else dict(getattr(parent_snap, "traits", {}) or {})
-        except Exception:
-            parent_traits = {}
-
-        gp_m, gp_f = _get_grandparents_for_parent(parent_snap)
-
-    if not revealed and parent_snap and gp_m and gp_f:
-        parent_geno = _geno_from_snap_law2(parent_snap)
-        # need a valid heterozygous locus with opposite homozygous grandparents and enough F2
-        for tk in law_trait_keys:
-            loc = trait_to_locus.get(tk)
-            if not loc:
-                continue
-
-            fam_sig = _law2_family_signature(parent_snap, gp_m, gp_f, loc)
-            if fam_sig is None:
-                continue
-
-            # collect F2 offspring for this family
-            dom_pheno = str(parent_traits.get(tk, "")).strip().lower()
-            counts = {"dom": 0, "rec": 0}
-            total = 0
-
-            for _cid2, csnap2 in arch_plants.items():
-                if isinstance(csnap2, dict) and not csnap2.get("alive", True):
-                    continue
-
-                smid2, sfid2 = _parents_from_snapshot(csnap2 if isinstance(csnap2, dict) else {})
-                if smid2 in (None, "", -1) or sfid2 in (None, "", -1):
-                    continue
-
-                # F2 must come from Aa×Aa parents belonging to this family signature
-                pm = _get_arch_snap(smid2)
-                pf = _get_arch_snap(sfid2)
-                if not pm or not pf:
-                    continue
-
-                # parent pair must be heterozygous at loc
-                pgm = _geno_from_snap_law2(pm)
-                pgf = _geno_from_snap_law2(pf)
-                pair_m = pgm.get(loc)
-                pair_f = pgf.get(loc)
-                if not (isinstance(pair_m, (list, tuple)) and len(pair_m) >= 2 and isinstance(pair_f, (list, tuple)) and len(pair_f) >= 2):
-                    continue
-                if len(set(pair_m[:2])) != 2 or len(set(pair_f[:2])) != 2:
-                    continue
-
-                # grandparents for each parent must match family signature
-                gp_m2, gp_f2 = _get_grandparents_for_parent(pm)
-                gp_m3, gp_f3 = _get_grandparents_for_parent(pf)
-                sig_m = _law2_family_signature(pm, gp_m2, gp_f2, loc) if (gp_m2 and gp_f2) else None
-                sig_f = _law2_family_signature(pf, gp_m3, gp_f3, loc) if (gp_m3 and gp_f3) else None
-                if sig_m != fam_sig or sig_f != fam_sig:
-                    continue
-
-                # classify phenotype
-                try:
-                    ctraits2 = csnap2.get("traits", {}) if isinstance(csnap2, dict) else getattr(csnap2, "traits", {}) or {}
-                except Exception:
-                    ctraits2 = {}
-                ph = str(ctraits2.get(tk, "")).strip().lower()
-                if not ph:
-                    continue
-
-                total += 1
-                if ph == dom_pheno:
-                    counts["dom"] += 1
-                else:
-                    counts["rec"] += 1
-
-            if total < LAW2_MIN_N:
-                continue
-
-            dom_frac = counts["dom"] / float(total) if total else 0.0
-            if LAW2_DOM_FRAC_MIN <= dom_frac <= LAW2_DOM_FRAC_MAX:
-                law2_discovered = True
-                trait_label = tk.replace("_", " ")
-                law2_trait_name = trait_label
-
-                # ratio string: dominant:recessive, scaled so recessive=1 if possible
-                try:
-                    d = counts["dom"]
-                    r = counts["rec"]
-                    if r > 0:
-                        x = d / float(r)
-                        x_str = (f"{x:.2f}").replace(".", ",")
-                        law2_ratio_str = f"{x_str}:1"
-                    else:
-                        law2_ratio_str = f"{d}:{r}"
-                except Exception:
-                    law2_ratio_str = ""
-
-                law2_reason = (
-                    f"Observed in F2 offspring (N = {total}) for trait '{trait_label}': "
-                    f"dominant vs recessive phenotypes appear close to 3:1."
-                )
-                break
-
-    # ---------------- Law 3 (Independent Assortment) ----------------
-    if not revealed and parent_snap and gp_m and gp_f and arch_plants and not law3_discovered:
-        parent_geno = _geno_from_snap_law2(parent_snap)
-
-        def _law3_family_signature(parent_snap_, gp_m_, gp_f_, loc1, loc2):
-            parent_geno_ = _geno_from_snap_law2(parent_snap_)
-            if not isinstance(parent_geno_, dict):
-                return None
-            p1 = parent_geno_.get(loc1)
-            p2 = parent_geno_.get(loc2)
-            if not (isinstance(p1, (list, tuple)) and len(p1) >= 2 and isinstance(p2, (list, tuple)) and len(p2) >= 2):
-                return None
-            if len(set(p1[:2])) != 2 or len(set(p2[:2])) != 2:
-                return None
-
-            gm = _geno_from_snap_law2(gp_m_)
-            gf = _geno_from_snap_law2(gp_f_)
-            if not isinstance(gm, dict) or not isinstance(gf, dict):
-                return None
-
-            def _canon(pair):
-                a1, a2 = pair[0], pair[1]
-                return "".join(sorted([str(a1), str(a2)]))
-
-            key1 = tuple(sorted([_canon(gm.get(loc1, ('?','?'))), _canon(gf.get(loc1, ('?','?')))]))
-            key2 = tuple(sorted([_canon(gm.get(loc2, ('?','?'))), _canon(gf.get(loc2, ('?','?')))]))
-            return tuple(sorted([(loc1, key1), (loc2, key2)]))
-
-        from itertools import combinations
-        from collections import Counter
-
-        candidate_traits = [tk for tk in law_trait_keys if tk in (parent_traits or {}) and trait_to_locus.get(tk)]
-
-        for tk1, tk2 in combinations(candidate_traits, 2):
-            if {"pod_color", "seed_shape"} == {tk1, tk2}:
-                continue
-
-            loc1 = trait_to_locus.get(tk1)
-            loc2 = trait_to_locus.get(tk2)
-            if not loc1 or not loc2:
-                continue
-
-            pair1 = parent_geno.get(loc1)
-            pair2 = parent_geno.get(loc2)
-            if not (isinstance(pair1, (list, tuple)) and len(pair1) >= 2 and isinstance(pair2, (list, tuple)) and len(pair2) >= 2):
-                continue
-            if len(set(pair1[:2])) != 2 or len(set(pair2[:2])) != 2:
-                continue
-
-            fam_sig = _law3_family_signature(parent_snap, gp_m, gp_f, loc1, loc2)
-            if fam_sig is None:
-                continue
-
-            combo_counts = Counter()
-            dom1 = str((parent_traits or {}).get(tk1, "")).strip().lower()
-            dom2 = str((parent_traits or {}).get(tk2, "")).strip().lower()
-
-            for _cid2, csnap2 in arch_plants.items():
-                if isinstance(csnap2, dict) and not csnap2.get("alive", True):
-                    continue
-
-                smid2, sfid2 = _parents_from_snapshot(csnap2 if isinstance(csnap2, dict) else {})
-                if smid2 in (None, "", -1) or sfid2 in (None, "", -1):
-                    continue
-
-                pm = _get_arch_snap(smid2)
-                pf = _get_arch_snap(sfid2)
-                if not pm or not pf:
-                    continue
-
-                # both parents must belong to same dihybrid family signature
-                gp_m2, gp_f2 = _get_grandparents_for_parent(pm)
-                gp_m3, gp_f3 = _get_grandparents_for_parent(pf)
-                sig_m = _law3_family_signature(pm, gp_m2, gp_f2, loc1, loc2) if (gp_m2 and gp_f2) else None
-                sig_f = _law3_family_signature(pf, gp_m3, gp_f3, loc1, loc2) if (gp_m3 and gp_f3) else None
-                if sig_m != fam_sig or sig_f != fam_sig:
-                    continue
-
-                try:
-                    ctraits2 = csnap2.get("traits", {}) if isinstance(csnap2, dict) else getattr(csnap2, "traits", {}) or {}
-                except Exception:
-                    ctraits2 = {}
-                ph1 = str(ctraits2.get(tk1, "")).strip().lower()
-                ph2 = str(ctraits2.get(tk2, "")).strip().lower()
-                if not ph1 or not ph2:
-                    continue
-
-                a = "D" if ph1 == dom1 else "r"
-                b = "D" if ph2 == dom2 else "r"
-                combo_counts[(a, b)] += 1
-
-            needed_keys = [("D","D"), ("D","r"), ("r","D"), ("r","r")]
-            total = sum(combo_counts.values())
-            if total < LAW3_MIN_N:
-                continue
-            if any(combo_counts[k] == 0 for k in needed_keys):
-                continue
-
-            expected_ratios = {("D","D"): 9, ("D","r"): 3, ("r","D"): 3, ("r","r"): 1}
-            chi2 = 0.0
-            for k in needed_keys:
-                obs = combo_counts[k]
-                exp = expected_ratios[k] * (total / 16.0)
-                if exp <= 0:
-                    continue
-                diff = obs - exp
-                chi2 += (diff * diff) / exp
-
-            if chi2 <= LAW3_CHI2_MAX:
-                law3_discovered = True
-                trait_label1 = tk1.replace("_", " ")
-                trait_label2 = tk2.replace("_", " ")
-
-                try:
-                    vals = [combo_counts[k] for k in needed_keys]
-                    total2 = sum(vals)
-                    if total2 > 0:
-                        scaled = [(v / total2) * 16.0 for v in vals]
-                        pretty_parts = [f"{x:.1f}".replace(".", ",") for x in scaled]
-                        law3_ratio_str = " : ".join(pretty_parts) + " (scaled to 16)"
-                    else:
-                        law3_ratio_str = ""
-                    law3_trait_pair = (trait_label1, trait_label2)
-                except Exception:
-                    law3_ratio_str = ""
-                    law3_trait_pair = (trait_label1, trait_label2)
-
-                try:
-                    cross_label = f"selfed F1 plant #{mid}" if str(mid) == str(fid) else f"F1 cross #{mid}×{fid}"
-                except Exception:
-                    cross_label = "F1 cross #?"
-
-                law3_reason = (
-                    f"Observed in dihybrid F2 offspring of {cross_label} "
-                    f"for traits '{trait_label1}' and '{trait_label2}': "
-                    f"the four phenotype combinations appear in an approximately 9:3:3:1 ratio (N = {total})."
-                )
-
-                break
-
-    # ---------------- Apply discoveries to app + UI ----------------
-    new = []
-
-    if not revealed:
-        if law1_discovered and not getattr(app, "law1_ever_discovered", False):
-            setattr(app, "law1_ever_discovered", True)
-            setattr(app, "law1_first_plant", pid)
-            new.append("law1")
-            if toast and hasattr(app, "_toast"):
-                try:
-                    app._toast(f"Law 1 (Dominance) discovered from plant #{pid}!", level="info")
-                except Exception:
-                    pass
-
-        if law2_discovered and not getattr(app, "law2_ever_discovered", False):
-            setattr(app, "law2_ever_discovered", True)
-            setattr(app, "law2_first_plant", pid)
-            new.append("law2")
-            if toast and hasattr(app, "_toast"):
-                try:
-                    app._toast(f"Law 2 (Segregation) discovered from plant #{pid}!", level="info")
-                except Exception:
-                    pass
-
-        if law3_discovered and not getattr(app, "law3_ever_discovered", False):
-            setattr(app, "law3_ever_discovered", True)
-            setattr(app, "law3_first_plant", pid)
-            new.append("law3")
-            if toast and hasattr(app, "_toast"):
-                try:
-                    app._toast(f"Law 3 (Independent Assortment) discovered from plant #{pid}!", level="info")
-                except Exception:
-                    pass
-
-    # Push ratio info to the main app for the top-bar UI
-    try:
-        if not revealed:
-            if law2_discovered:
-                if not law2_ratio_str:
-                    # best-effort fallback
-                    law2_ratio_str = "Ratio __:__"
-                setattr(app, "law2_ratio_ui", law2_ratio_str)
-            if law3_discovered and law3_ratio_str:
-                setattr(app, "law3_ratio_ui", law3_ratio_str)
-            if hasattr(app, "_update_law_status_label"):
-                app._update_law_status_label()
-    except Exception:
-        pass
-
-    # Stash law ratio info into the archive snapshot
-    try:
-        if isinstance(snap, dict):
-            if law2_discovered and law2_ratio_str:
-                snap["law2_ratio"] = law2_ratio_str
-                if law2_trait_name:
-                    snap["law2_trait"] = law2_trait_name
-            if law3_discovered and law3_ratio_str:
-                snap["law3_ratio"] = law3_ratio_str
-                if law3_trait_pair:
-                    snap["law3_traits"] = f"{law3_trait_pair[0]} × {law3_trait_pair[1]}"
-    except Exception:
-        pass
-
-    return {"law1": bool(law1_discovered), "law2": bool(law2_discovered), "law3": bool(law3_discovered), "new": new}
-
-# =============================================================================
-# Mendelian law unlock thresholds (single source of truth)
-# =============================================================================
-
-# Law 1 (Dominance): how many phenotype-only F1 offspring (same phenotype) needed
-LAW1_MIN_F1 = 16
-
-# Law 2 (Segregation, ~3:1): minimum F2 sample size and acceptable dominant fraction band
-LAW2_MIN_N = 65
-LAW2_DOM_FRAC_MIN = 0.73
-LAW2_DOM_FRAC_MAX = 0.85
-
-# Law 3 (Independent Assortment, ~9:3:3:1): minimum dihybrid F2 sample size and chi-square threshold
-LAW3_MIN_N = 80
-LAW3_CHI2_MAX = 4.0
+    return shared_test_mendelian_laws(
+        app,
+        archive=archive,
+        pid=pid,
+        allow_credit=allow_credit,
+        toast=toast,
+    )
 
 class HistoryArchiveBrowser(tk.Toplevel):
-    BG = "#0c1a21"
-    PANEL = "#0f2230"
-    CARD = "#102633"
-    FG = "#e8f0f5"
-    MUTED = "#a8bcc9"
-    ACCENT = "#1f6aa5"
+    BG = theme.BROWSER_BG
+    PANEL = theme.BROWSER_PANEL
+    CARD = theme.BROWSER_CARD
+    FG = theme.BROWSER_FG
+    MUTED = theme.BROWSER_MUTED
+    ACCENT = theme.BROWSER_ACCENT
+    CANVAS_BG = theme.BROWSER_CANVAS_BG
     PAD = 10
 
     # --- Background tints for pods (applied to whole pod card) ---
-    POD_TINT_GREEN = "#2d5145"   # slightly less green
-    POD_TINT_YELLOW = "#6a5a16"  # strong yellow/olive
+    POD_TINT_GREEN = theme.POD_TINT_GREEN
+    POD_TINT_YELLOW = theme.POD_TINT_YELLOW
 
     def _pod_tint_from_color(self, color_str):
         s = str(color_str or "").lower()
@@ -813,6 +154,7 @@ class HistoryArchiveBrowser(tk.Toplevel):
         tk.Toplevel.__init__(self, parent_window)
         self.app = app
         self.title("Trait Inheritance Explorer")
+        theme.apply_window_options(self)
         self.configure(bg=self.BG)
         self.minsize(1024, 600)
 
@@ -839,13 +181,15 @@ class HistoryArchiveBrowser(tk.Toplevel):
         self._style.configure(
             "Toolbar.TButton",
             padding=(10, 4),
-            foreground=self.FG,
-            background=self.CARD
+            foreground=theme.BUTTON_FG,
+            background=theme.BUTTON_BG,
+            font=(theme.UI_FONT, 10, "bold"),
+            relief="flat",
         )
         self._style.map(
             "Toolbar.TButton",
-            foreground=[("active", self.FG), ("pressed", self.FG)],
-            background=[("active", self.CARD), ("pressed", self.CARD)],
+            foreground=[("active", theme.BUTTON_FG), ("pressed", theme.BUTTON_FG)],
+            background=[("active", theme.BUTTON_HOVER), ("pressed", theme.BUTTON_ACTIVE)],
         )
 
         def _mkbtn(parent, text, command, **extra):
@@ -854,7 +198,15 @@ class HistoryArchiveBrowser(tk.Toplevel):
                 return ttk.Button(parent, text=text, command=command, style="Toolbar.TButton")
             else:
                 # On Windows/Linux classic tk.Button styling is fine
-                kw = dict(bg=self.CARD, fg=self.FG, relief="groove")
+                kw = dict(
+                    bg=theme.BUTTON_BG,
+                    fg=theme.BUTTON_FG,
+                    activebackground=theme.BUTTON_HOVER,
+                    activeforeground=theme.BUTTON_FG,
+                    relief="flat",
+                    bd=0,
+                    highlightthickness=0,
+                )
                 kw.update(extra)
                 return tk.Button(parent, text=text, command=command, **kw)
 
@@ -873,14 +225,14 @@ class HistoryArchiveBrowser(tk.Toplevel):
         pw = ttk.Panedwindow(self, orient="horizontal")
         pw.pack(fill="both", expand=True, padx=self.PAD, pady=(4, self.PAD))
 
-        left = tk.Frame(pw, bg=self.PANEL, highlightthickness=1, highlightbackground="#153242")
+        left = tk.Frame(pw, bg=self.PANEL, highlightthickness=1, highlightbackground=theme.BROWSER_BORDER)
         pw.add(left, weight=1)
 
         left_header = tk.Frame(left, bg=self.PANEL)
         left_header.pack(fill="x", padx=self.PAD, pady=(self.PAD, 6))
-        self.lbl_left_title = tk.Label(left_header, text="—", bg=self.PANEL, fg=self.FG, font=("Segoe UI", 14, "bold"))
+        self.lbl_left_title = tk.Label(left_header, text="—", bg=self.PANEL, fg=self.FG, font=(theme.DISPLAY_FONT, 15, "bold"))
         self.lbl_left_title.pack(anchor="w")
-        self.lbl_left_parents = tk.Label(left_header, text="", bg=self.PANEL, fg=self.MUTED, font=("Segoe UI", 12))
+        self.lbl_left_parents = tk.Label(left_header, text="", bg=self.PANEL, fg=self.MUTED, font=(theme.UI_FONT, 12))
         self.lbl_left_parents.pack(anchor="w", pady=(2,0))
 
         # ✅ Proper traits box for the explorer
@@ -894,14 +246,22 @@ class HistoryArchiveBrowser(tk.Toplevel):
         list_box.pack(fill="both", expand=False, padx=self.PAD, pady=(0, self.PAD))
         list_wrap = tk.Frame(list_box, bg=self.PANEL)
         list_wrap.pack(fill="both", expand=True, padx=6, pady=6)
-        self.listbox = tk.Listbox(list_wrap, height=10)
+        self.listbox = tk.Listbox(
+            list_wrap,
+            height=10,
+            bg=theme.LISTBOX_BG,
+            fg=self.FG,
+            selectbackground=theme.BUTTON_BG,
+            selectforeground=theme.BUTTON_FG,
+            highlightthickness=0,
+        )
         self.listbox.pack(side="left", fill="both", expand=True)
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
         sb = tk.Scrollbar(list_wrap, command=self.listbox.yview)
         sb.pack(side="right", fill="y")
         self.listbox.config(yscrollcommand=sb.set)
 
-        center = tk.Frame(pw, bg=self.PANEL, highlightthickness=1, highlightbackground="#153242")
+        center = tk.Frame(pw, bg=self.PANEL, highlightthickness=1, highlightbackground=theme.BROWSER_BORDER)
         pw.add(center, weight=3)
 
         toggles = tk.Frame(center, bg=self.PANEL)
@@ -914,14 +274,14 @@ class HistoryArchiveBrowser(tk.Toplevel):
 
         for label in ("Flowers", "Pod color", "Pod shape", "Seed color", "Seed shape", "Height"):
             rb = tk.Radiobutton(toggles, text=label, variable=self.trait_mode, value=label,
-                                bg=self.PANEL, fg=self.FG, selectcolor=self.CARD, activebackground=self.PANEL,
+                                bg=self.PANEL, fg=self.FG, selectcolor=theme.LAW_BG, activebackground=theme.PANEL_ALT,
                                 indicatoron=True, command=lambda: self._draw_canvas_family(getattr(self, "current_pid", None)))
             rb.pack(side="left", padx=(0,12))
 
-        self.canvas = tk.Canvas(center, bg="#0b1a22", highlightthickness=0)
+        self.canvas = tk.Canvas(center, bg=self.CANVAS_BG, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True, padx=self.PAD, pady=(0, self.PAD))
 
-        right = tk.Frame(pw, bg=self.PANEL, highlightthickness=1, highlightbackground="#153242")
+        right = tk.Frame(pw, bg=self.PANEL, highlightthickness=1, highlightbackground=theme.BROWSER_BORDER)
         pw.add(right, weight=2)
 
         # Export traits of the currently selected plant to CSV
@@ -958,7 +318,7 @@ class HistoryArchiveBrowser(tk.Toplevel):
         self.NODE_OUTER_W = 2
         self.LINK_W = 3
         self.NODE_LABEL_DX = 40
-        self.NODE_LABEL_FONT = ("Segoe UI", 12, "bold")
+        self.NODE_LABEL_FONT = (theme.UI_FONT, 12, "bold")
         self._seed_from_live()
         self._reload_ids()
 
@@ -3090,11 +2450,11 @@ class HistoryArchiveBrowser(tk.Toplevel):
             if trait_key in ("flowers", "flower", "flower_color"):
                 col = str(traits.get("flower_color", val)).lower()
                 try:
-                    p = trait_icon_path("flower_color", col)
+                    p = icon_loader.trait_icon_path("flower_color", col)
                 except Exception:
                     p = ""
                 if p:
-                    im = safe_image_scaled(p, sx, sy)
+                    im = icon_loader.safe_image_scaled(p, sx, sy)
                     if im is not None:
                         return im
 
@@ -3103,20 +2463,20 @@ class HistoryArchiveBrowser(tk.Toplevel):
                 pos = str(traits.get("flower_position", val)).lower()
                 # try dedicated position icon
                 try:
-                    p = trait_icon_path("flower_position", pos)
+                    p = icon_loader.trait_icon_path("flower_position", pos)
                 except Exception:
                     p = ""
                 if p:
-                    im = safe_image_scaled(p, sx, sy)
+                    im = icon_loader.safe_image_scaled(p, sx, sy)
                     if im is not None:
                         return im
                 # fall back to composed (position + color) if available
                 try:
-                    p = flower_icon_path_hi(pos or None, str(traits.get("flower_color","")).lower() or None)
+                    p = icon_loader.flower_icon_path_hi(pos or None, str(traits.get("flower_color","")).lower() or None)
                 except Exception:
                     p = ""
                 if p:
-                    im = safe_image_scaled(p, sx, sy)
+                    im = icon_loader.safe_image_scaled(p, sx, sy)
                     if im is not None:
                         return im
 
@@ -3127,32 +2487,32 @@ class HistoryArchiveBrowser(tk.Toplevel):
                 c = "green" if "green" in c else ("yellow" if "yellow" in c else c)
                 s = "constricted" if "constrict" in s else ("inflated" if "inflate" in s else s)
                 try:
-                    p = pod_shape_icon_path(s, c)
+                    p = icon_loader.pod_shape_icon_path(s, c)
                 except Exception:
                     p = ""
                 if p:
-                    im = safe_image_scaled(p, sx, sy)
+                    im = icon_loader.safe_image_scaled(p, sx, sy)
                     if im is not None:
                         return im
 
             # Generic trait icon
             try:
-                p = trait_icon_path(trait_key, val)
+                p = icon_loader.trait_icon_path(trait_key, val)
             except Exception:
                 p = ""
             if p:
-                im = safe_image_scaled(p, sx, sy)
+                im = icon_loader.safe_image_scaled(p, sx, sy)
                 if im is not None:
                     return im
 
             # Height synonyms
             if trait_key in ("height","plant_height"):
                 try:
-                    p = trait_icon_path("plant_height", val or traits.get("plant_height",""))
+                    p = icon_loader.trait_icon_path("plant_height", val or traits.get("plant_height",""))
                 except Exception:
                     p = ""
                 if p:
-                    im = safe_image_scaled(p, sx, sy)
+                    im = icon_loader.safe_image_scaled(p, sx, sy)
                     if im is not None:
                         return im
         except Exception:
@@ -3426,8 +2786,8 @@ class HistoryArchiveBrowser(tk.Toplevel):
                     20, 20,
                     anchor="nw",
                     text=f"Tree error: {e}",
-                    fill="#ffb4b4",
-                    font=("Segoe UI", 12, "bold")
+                    fill=theme.BROWSER_WARNING,
+                    font=(theme.UI_FONT, 12, "bold")
                 )
                 traceback.print_exc()
 

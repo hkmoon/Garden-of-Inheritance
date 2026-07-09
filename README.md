@@ -24,6 +24,10 @@ Python 3.8 or higher
 - math
 - pathlib
 
+## Third-party dependency
+- Pillow (PIL) — used for icons, plant textures, and the polished UI toolkit.
+  Install with: `python3 -m pip install pillow`
+
 ## License
 
 This project is licensed under the BSD 3-Clause License – see the LICENSE file for details.

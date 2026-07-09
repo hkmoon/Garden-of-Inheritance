@@ -10,6 +10,8 @@ import random
 from typing import Optional
 import tkinter as tk
 
+from garden_of_inheritance import theme
+
 
 # Growth stage names for display
 STAGE_NAMES = {
@@ -583,33 +585,33 @@ class Plant:
             Hex color string
         """
         if not self.alive:
-            return "#666666"
+            return theme.TEXT_MUTED
 
         if getattr(self, "is_weak", False) or getattr(self, "late_season_stress", False):
             # Yellowish-amber sick palette: used for weak plants and late-season decline.
             # Health 80+ stays green so a freshly-stressed plant isn't immediately alarming;
             # below 80 it gradually shifts through amber and ochre as the season kills it.
             if self.health >= 80:
-                return "#008b1c"  # still green at full health
+                return theme.TILE_GRASS_TOP
             elif self.health >= 60:
-                return "#c8a822"  # pale yellow — first sign of stress
+                return theme.SELECTION_GOLD
             elif self.health >= 40:
-                return "#b07010"  # amber
+                return theme.WOOD_LIGHT
             elif self.health >= 20:
-                return "#885500"  # ochre-brown
+                return theme.WOOD_MID
             else:
-                return "#704000"  # dark brown — near death
+                return theme.WOOD_DARK
 
         if self.health >= 80:
-            return "#008b1c"
+            return theme.TILE_GRASS_SHADE
         elif self.health >= 60:
-            return "#6f6000"
+            return theme.SELECTION_GOLD
         elif self.health >= 40:
-            return "#cc6000"
+            return theme.WOOD_LIGHT
         elif self.health >= 20:
-            return "#f90000"
+            return theme.BROWSER_WARNING
         else:
-            return "#f33000"
+            return theme.BROWSER_DANGER
     
     @classmethod
     def get_icons(cls):

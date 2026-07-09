@@ -13,8 +13,19 @@ from typing import List, Literal, Optional, Callable
 import tkinter as tk
 from tkinter import Toplevel, ttk
 
+from garden_of_inheritance import theme
+from garden_of_inheritance import widgets
 from plant import Plant, STAGE_NAMES
-from icon_loader import *
+import icon_loader
+
+
+def _pill(parent, text, command, variant="wood", state="normal", **_ignore):
+    """Toolkit pill button; replaces the platform-styled tk.Button pairs."""
+    b = widgets.make_button(parent, text=text, command=command, variant=variant,
+                            height=32, font_size=11)
+    if state == "disabled":
+        b.configure(state="disabled")
+    return b
 
 
 # ============================================================================
@@ -242,12 +253,20 @@ class InventoryPopup(Toplevel):
 
         self.title("Seeds")
         self.geometry("800x560")
+        theme.apply_window_options(self)
+        self.configure(bg=theme.PANEL_BG)
         self.garden = garden
         self.inventory = inventory
         self.on_seed_selected = on_seed_selected
         self.seeds_page = 0
 
-        self.seeds_frame = tk.Frame(self, padx=8, pady=8)
+        # Wood header strip
+        header = tk.Frame(self, bg=theme.WOOD_MID)
+        header.pack(fill="x")
+        tk.Label(header, text="Inventory", bg=theme.WOOD_MID, fg=theme.TEXT_LIGHT,
+                 font=(theme.DISPLAY_FONT, 16, "bold")).pack(side="left", padx=14, pady=8)
+
+        self.seeds_frame = tk.Frame(self, padx=8, pady=8, bg=theme.PANEL_BG)
         self.seeds_frame.pack(fill="both", expand=True)
         self._build_seeds_tab()
 
@@ -262,14 +281,14 @@ class InventoryPopup(Toplevel):
     # Helper Methods
     # ========================================================================
     
-    def _label_with_bold_gender(self, parent, text, base_font=("Segoe UI", 12), bold_font=("Segoe UI", 12, "bold")):
+    def _label_with_bold_gender(self, parent, text, base_font=(theme.UI_FONT, 12), bold_font=(theme.UI_FONT, 12, "bold")):
         """Create a label with bold gender symbols (♀, ♂)."""
-        container = tk.Frame(parent)
+        container = tk.Frame(parent, bg=parent.cget("bg"))
         for part in re.split(r'([♀♂])', text):
             if not part:
                 continue
             font = bold_font if part in ("♀", "♂") else base_font
-            tk.Label(container, text=part, font=font).pack(side="left")
+            tk.Label(container, text=part, font=font, bg=container.cget("bg"), fg=theme.TEXT_PRIMARY).pack(side="left")
         return container
 
     # ========================================================================
@@ -288,31 +307,13 @@ class InventoryPopup(Toplevel):
 
         # Refresh button
         try:
-            if self.app is not None:
-                btn_refresh = tk.Button(
-                    header,
-                    text="Refresh",
-                    command=self.refresh_current_tab,
-                    **self.app.button_style,
-                )
-                self.app._apply_hover(btn_refresh)
-            else:
-                btn_refresh = tk.Button(header, text="Refresh", command=self.refresh_current_tab)
+            btn_refresh = _pill(header, "Refresh", self.refresh_current_tab)
             btn_refresh.pack(side="right")
         except Exception:
             pass
 
         # Previous button
-        if self.app is not None:
-            self.pln_prev = tk.Button(
-                header,
-                text="◀ Prev",
-                command=self._pollen_prev,
-                **self.app.button_style,
-            )
-            self.app._apply_hover(self.pln_prev)
-        else:
-            self.pln_prev = tk.Button(header, text="◀ Prev", command=self._pollen_prev)
+        self.pln_prev = _pill(header, "◀ Prev", self._pollen_prev)
         self.pln_prev.pack(side="left")
 
         # Page label
@@ -320,16 +321,7 @@ class InventoryPopup(Toplevel):
         self.pln_page_label.pack(side="left", padx=8)
 
         # Next button
-        if self.app is not None:
-            self.pln_next = tk.Button(
-                header,
-                text="Next ▶",
-                command=self._pollen_next,
-                **self.app.button_style,
-            )
-            self.app._apply_hover(self.pln_next)
-        else:
-            self.pln_next = tk.Button(header, text="Next ▶", command=self._pollen_next)
+        self.pln_next = _pill(header, "Next ▶", self._pollen_next)
         self.pln_next.pack(side="right")
 
         # Grid for pollen groups
@@ -349,11 +341,11 @@ class InventoryPopup(Toplevel):
             badge = tk.Label(
                 self._pollen_legend,
                 text="STALE",
-                fg="#b45309",
-                bg="#fff7ed",
+                fg=theme.BROWSER_WARNING,
+                bg=theme.ENTRY_BG,
                 bd=1,
                 relief="solid",
-                font=("Segoe UI", 12)
+                font=(theme.UI_FONT, 12)
             )
             badge.pack(side="left", padx=(0, 4))
             
@@ -411,9 +403,9 @@ class InventoryPopup(Toplevel):
 
         # Show empty message if no pollen
         if total == 0:
-            frame = tk.Frame(self.pln_grid, borderwidth=1, relief="groove", padx=6, pady=12)
+            frame = tk.Frame(self.pln_grid, borderwidth=1, relief="groove", padx=6, pady=12, bg=theme.PANEL_ALT)
             frame.pack(fill="x", expand=True, padx=6, pady=6)
-            tk.Label(frame, text="No pollen collected yet.", font=("Segoe UI", 12)).pack()
+            tk.Label(frame, text="No pollen collected yet.", font=(theme.UI_FONT, 12), bg=theme.PANEL_ALT, fg=theme.TEXT_MUTED).pack()
             return
 
         # Get current day for viability check
@@ -472,16 +464,7 @@ class InventoryPopup(Toplevel):
                 pass
             self._render_pollen_page()
 
-        discard_btn = tk.Button(
-            header,
-            text="✕",
-            width=2,
-            fg="red",
-            command=delete_all_pollen,
-            **(self.app.button_style if self.app else {}),
-        )
-        if self.app:
-            self.app._apply_hover(discard_btn)
+        discard_btn = _pill(header, "✕", delete_all_pollen, variant="danger")
         discard_btn.pack(side="right", anchor="e")
 
         # Check viability
@@ -506,11 +489,11 @@ class InventoryPopup(Toplevel):
             tk.Label(
                 badge_row,
                 text="STALE",
-                fg="#b45309",
-                bg="#fff7ed",
+                fg=theme.BROWSER_WARNING,
+                bg=theme.ENTRY_BG,
                 bd=1,
                 relief="solid",
-                font=("Segoe UI", 10, "bold"),
+                font=(theme.UI_FONT, 10, "bold"),
                 padx=6,
                 pady=2,
             ).pack(side="left")
@@ -518,8 +501,8 @@ class InventoryPopup(Toplevel):
             tk.Label(
                 badge_row,
                 text=" (not usable)",
-                font=("Segoe UI", 10),
-                fg="#666666",
+                font=(theme.UI_FONT, 10),
+                fg=theme.TEXT_MUTED,
             ).pack(side="left")
 
             # Show how long expired
@@ -530,8 +513,8 @@ class InventoryPopup(Toplevel):
                     tk.Label(
                         badge_row,
                         text=f"  (expired {days_expired} day{'s' if days_expired != 1 else ''} ago)",
-                        font=("Segoe UI", 10),
-                        fg="#666666",
+                        font=(theme.UI_FONT, 10),
+                        fg=theme.TEXT_MUTED,
                     ).pack(side="left")
             except Exception:
                 pass
@@ -539,24 +522,12 @@ class InventoryPopup(Toplevel):
         # Use button (enabled only if viable pollen exists)
         pkt = viable[0] if viable else None
         
-        if self.app is not None:
-            use_btn = tk.Button(
-                frame,
-                text="    Use    ",
-                fg="green",
-                state=("normal" if pkt is not None else "disabled"),
-                command=(lambda p=pkt: self._use_pollen(p)) if pkt is not None else None,
-                **self.app.button_style,
-            )
-            self.app._apply_hover(use_btn)
-        else:
-            use_btn = tk.Button(
-                frame,
-                text="Use",
-                state=("normal" if pkt is not None else "disabled"),
-                command=(lambda p=pkt: self._use_pollen(p)) if pkt is not None else None,
-            )
-
+        use_btn = _pill(
+            frame,
+            "Use",
+            (lambda p=pkt: self._use_pollen(p)) if pkt is not None else None,
+            state=("normal" if pkt is not None else "disabled"),
+        )
         use_btn.pack(pady=(6, 0), anchor="center")
     
     def _use_pollen(self, packet):
@@ -606,16 +577,7 @@ class InventoryPopup(Toplevel):
         header.pack(fill="x", pady=(0, 8))
 
         # Previous button
-        if self.app is not None:
-            self.sd_prev = tk.Button(
-                header,
-                text="◀ Prev",
-                command=self._seeds_prev,
-                **self.app.button_style,
-            )
-            self.app._apply_hover(self.sd_prev)
-        else:
-            self.sd_prev = tk.Button(header, text="◀ Prev", command=self._seeds_prev)
+        self.sd_prev = _pill(header, "◀ Prev", self._seeds_prev)
         self.sd_prev.pack(side="left")
 
         # Page label
@@ -623,16 +585,7 @@ class InventoryPopup(Toplevel):
         self.sd_page_label.pack(side="left", padx=8)
 
         # Next button
-        if self.app is not None:
-            self.sd_next = tk.Button(
-                header,
-                text="Next ▶",
-                command=self._seeds_next,
-                **self.app.button_style,
-            )
-            self.app._apply_hover(self.sd_next)
-        else:
-            self.sd_next = tk.Button(header, text="Next ▶", command=self._seeds_next)
+        self.sd_next = _pill(header, "Next ▶", self._seeds_next)
         self.sd_next.pack(side="right")
 
         # Grid for seed groups
@@ -688,9 +641,9 @@ class InventoryPopup(Toplevel):
 
         # Show empty message if no seeds
         if total == 0:
-            frame = tk.Frame(self.sd_grid, borderwidth=1, relief="groove", padx=6, pady=12)
+            frame = tk.Frame(self.sd_grid, borderwidth=1, relief="groove", padx=6, pady=12, bg=theme.PANEL_ALT)
             frame.pack(fill="x", expand=True, padx=6, pady=6)
-            tk.Label(frame, text="No harvested seeds yet.", font=("Segoe UI", 12)).pack()
+            tk.Label(frame, text="No harvested seeds yet.", font=(theme.UI_FONT, 12), bg=theme.PANEL_ALT, fg=theme.TEXT_MUTED).pack()
             return
 
         # Display seed groups
@@ -759,18 +712,7 @@ class InventoryPopup(Toplevel):
                 self.app._toast(f"Discarded {removed} seeds.")
             self._render_seeds_page()
 
-        discard_btn = tk.Button(
-            header,
-            text="✕",
-            width=2,
-            fg="red",
-            command=discard_group,
-            **(self.app.button_style if self.app else {}),
-        )
-        
-        if self.app:
-            self.app._apply_hover(discard_btn)
-        
+        discard_btn = _pill(header, "✕", discard_group, variant="danger")
         discard_btn.pack(side="right", anchor="e")
 
         # Seed trait icons
@@ -819,16 +761,8 @@ class InventoryPopup(Toplevel):
                         self._render_seeds_page()
                         break
 
-        b_plant_n = tk.Button(
-            plant_n_frame,
-            text="Plant (n)",
-            fg="green",
-            state=("normal" if count > 0 else "disabled"),
-            command=_plant_n,
-            **bstyle,
-        )
-        if self.app:
-            self.app._apply_hover(b_plant_n)
+        b_plant_n = _pill(plant_n_frame, "Plant (n)", _plant_n, variant="success",
+                          state=("normal" if count > 0 else "disabled"))
         b_plant_n.pack(side="left")
 
         # "Plant ALL" ---------------------------------------------------------
@@ -842,16 +776,8 @@ class InventoryPopup(Toplevel):
                         self.on_seed_selected(seed)
                 self._render_seeds_page()
 
-        b_all = tk.Button(
-            btn_row,
-            text="Plant ALL",
-            fg="green",
-            state=("normal" if count > 0 else "disabled"),
-            command=_plant_all,
-            **bstyle,
-        )
-        if self.app:
-            self.app._apply_hover(b_all)
+        b_all = _pill(btn_row, "Plant ALL", _plant_all, variant="success",
+                      state=("normal" if count > 0 else "disabled"))
         b_all.pack(side="left")
     
     def _seed_matches_group(self, seed, kind, source_id, donor_id):
@@ -882,9 +808,9 @@ class InventoryPopup(Toplevel):
             if not value:
                 return False
             try:
-                path = trait_icon_path(trait_key, value)
+                path = icon_loader.trait_icon_path(trait_key, value)
                 if path:
-                    img = safe_image(path)
+                    img = icon_loader.safe_image(path)
                     label = tk.Label(icon_row, image=img)
                     label.image = img
                     label.pack(side="left", padx=(0, 6))
@@ -903,11 +829,11 @@ class InventoryPopup(Toplevel):
             shown_any |= add_trait_icon("seed_color", getattr(traits, "seed_color", None))
 
         if not shown_any:
-            tk.Label(parent, text="• (no seed preview)", fg="#666666").pack(anchor="w")
+            tk.Label(parent, text="• (no seed preview)", fg=theme.TEXT_MUTED, bg=parent.cget("bg")).pack(anchor="w")
 
     def _label_with_bold_gender(self, parent, text, base_font, bold_font):
         """Create a label with bold gender symbols (♀, ♂)."""
-        label = tk.Label(parent, text=text, font=base_font)
+        label = tk.Label(parent, text=text, font=base_font, bg=parent.cget("bg"), fg=theme.TEXT_PRIMARY)
         
         # This is a simplified version - you may want to implement
         # actual bold rendering for ♀ and ♂ symbols if needed
@@ -984,32 +910,27 @@ class PollenChooserPopup(Toplevel):
         self.title("Choose Pollen")
         self.geometry("800x700")
         self.resizable(True, True)
+        theme.apply_window_options(self)
+        self.configure(bg=theme.PANEL_BG)
 
         self._build()
 
     # ── Build ────────────────────────────────────────────────────────────────
 
     def _build(self):
-        bstyle = self.app.button_style if self.app else {}
-
-        outer = tk.Frame(self, padx=10, pady=10)
+        outer = tk.Frame(self, padx=10, pady=10, bg=theme.PANEL_BG)
         outer.pack(fill="both", expand=True)
 
         # ── Header ──────────────────────────────────────────────────────────
-        header = tk.Frame(outer)
+        header = tk.Frame(outer, bg=theme.PANEL_BG)
         header.pack(fill="x", pady=(0, 6))
 
-        btn_prev = tk.Button(header, text="◀ Prev", command=self._prev, **bstyle)
-        btn_next = tk.Button(header, text="Next ▶", command=self._next, **bstyle)
-        if self.app:
-            self.app._apply_hover(btn_prev)
-            self.app._apply_hover(btn_next)
+        btn_prev = _pill(header, "◀ Prev", self._prev)
+        btn_next = _pill(header, "Next ▶", self._next)
 
-        self._page_lbl = tk.Label(header, text="", font=("Segoe UI", 11))
+        self._page_lbl = tk.Label(header, text="", font=(theme.UI_FONT, 11), bg=theme.PANEL_BG, fg=theme.TEXT_PRIMARY)
 
-        btn_close = tk.Button(header, text="✕", command=self.destroy, **bstyle)
-        if self.app:
-            self.app._apply_hover(btn_close)
+        btn_close = _pill(header, "✕", self.destroy, variant="muted")
 
         self._page_lbl.pack(side="left", padx=8)
         btn_prev.pack(side="left")
@@ -1017,7 +938,7 @@ class PollenChooserPopup(Toplevel):
         btn_next.pack(side="right", padx=(0, 6))
 
         # ── Card grid ───────────────────────────────────────────────────────
-        self._grid = tk.Frame(outer)
+        self._grid = tk.Frame(outer, bg=theme.PANEL_BG)
         self._grid.pack(fill="both", expand=True)
         for c in range(3):
             self._grid.grid_columnconfigure(c, weight=1, uniform="col")
@@ -1078,10 +999,10 @@ class PollenChooserPopup(Toplevel):
         shown = keys[start:end]
 
         if not shown:
-            f = tk.Frame(self._grid, borderwidth=1, relief="groove", padx=10, pady=10)
+            f = tk.Frame(self._grid, borderwidth=1, relief="groove", padx=10, pady=10, bg=theme.PANEL_ALT)
             f.grid(row=1, column=1, padx=8, pady=8, sticky="nsew")
             tk.Label(f, text="No pollen collected yet.",
-                     fg="#666666", font=("Segoe UI", 12, "italic")).pack()
+                     bg=theme.PANEL_ALT, fg=theme.TEXT_MUTED, font=(theme.UI_FONT, 12, "italic")).pack()
             return
 
         for idx, source_id in enumerate(shown):
@@ -1089,7 +1010,6 @@ class PollenChooserPopup(Toplevel):
             self._render_card(idx, source_id, packets, today)
 
     def _render_card(self, idx, source_id, packets, today):
-        bstyle = self.app.button_style if self.app else {}
         r, c   = idx // 3, idx % 3
 
         # No fixed size — let content determine height so Use button is never clipped
@@ -1116,10 +1036,7 @@ class PollenChooserPopup(Toplevel):
                 pass
             self._render()
 
-        btn_x = tk.Button(hdr, text="✕", width=2, fg="red",
-                          command=_discard, **bstyle)
-        if self.app:
-            self.app._apply_hover(btn_x)
+        btn_x = _pill(hdr, "✕", _discard, variant="danger")
         btn_x.pack(side="right")
 
         # ── Icon row: flower icon + anther icon ──────────────────────────────
@@ -1142,11 +1059,11 @@ class PollenChooserPopup(Toplevel):
         # Flower icon (hi-res first, then standard)
         flower_loaded = False
         if flower_pos and flower_color:
-            for path_fn in (flower_icon_path_hi, flower_icon_path):
+            for path_fn in (icon_loader.flower_icon_path_hi, icon_loader.flower_icon_path):
                 try:
                     p = path_fn(flower_pos, flower_color)
                     if p:
-                        raw = safe_image(p)
+                        raw = icon_loader.safe_image(p)
                         if raw:
                             img = raw.subsample(
                                 max(1, raw.width()  // sz),
@@ -1168,9 +1085,9 @@ class PollenChooserPopup(Toplevel):
 
         # Anther icon
         try:
-            anther_path = os.path.join(ICONS_DIR, "anther_small.png")
+            anther_path = os.path.join(icon_loader.ICONS_DIR, "anther_small.png")
             if os.path.exists(anther_path):
-                raw = safe_image(anther_path)
+                raw = icon_loader.safe_image(anther_path)
                 if raw:
                     img = raw.subsample(
                         max(1, raw.width()  // sz),
@@ -1213,11 +1130,8 @@ class PollenChooserPopup(Toplevel):
         info_row.pack(fill="x", pady=(4, 0))
 
         # Use button — right side, aligned under the ✕
-        btn_use = tk.Button(info_row, text="Use", fg="green",
-                            state=("normal" if pkt else "disabled"),
-                            command=_use if pkt else None, **bstyle)
-        if self.app:
-            self.app._apply_hover(btn_use)
+        btn_use = _pill(info_row, "Use", (_use if pkt else None),
+                        state=("normal" if pkt else "disabled"))
         btn_use.pack(side="right")
 
         # Count text — left side
@@ -1225,7 +1139,7 @@ class PollenChooserPopup(Toplevel):
         tk.Label(info_row,
                  text=f"×{len(packets)} collected  |  {viable_count} viable{stale_tag}",
                  font=("Segoe UI", 9),
-                 fg=("#b45309" if stale_tag else "#444444")).pack(side="left")
+                 fg=(theme.BROWSER_WARNING if stale_tag else theme.TEXT_MUTED)).pack(side="left")
 
     # ── Pagination ────────────────────────────────────────────────────────────
 

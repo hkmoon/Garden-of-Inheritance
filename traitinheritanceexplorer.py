@@ -41,7 +41,17 @@ except ImportError:
     _PIL_AVAILABLE = False
 
 # Local
-from icon_loader import *
+import icon_loader
+from garden_of_inheritance import theme
+from garden_of_inheritance.laws import (
+    LAW1_MIN_F1,
+    LAW2_DOM_FRAC_MAX,
+    LAW2_DOM_FRAC_MIN,
+    LAW2_MIN_N,
+    LAW3_CHI2_MAX,
+    LAW3_MIN_N,
+    test_mendelian_laws as shared_test_mendelian_laws,
+)
 
 
 # ============================================================================
@@ -62,28 +72,6 @@ except Exception:
 # Standalone Mendelian Law Testing Functions
 # ============================================================================
 
-
-import functools
-import math
-import os
-import re
-import traceback
-from collections import Counter
-from itertools import combinations
-import platform
-
-import tkinter as tk
-from tkinter import messagebox, ttk
-
-from icon_loader import *
-
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-EXPORT_DIR = os.path.join(ROOT_DIR, "export")
-try:
-    os.makedirs(EXPORT_DIR, exist_ok=True)
-except Exception:
-    pass
-    
 def _test_mendelian_laws_now(self):
     try:
         # keep archive in sync (same prep as TIE)
@@ -107,718 +95,28 @@ def _test_mendelian_laws_now(self):
             print("Law test failed:", e)
 
 def test_mendelian_laws(app, archive=None, pid=None, allow_credit=True, toast=True, target_law=None):
-    """Run Mendelian-law detection using the *exact same rules* as the Trait Inheritance Explorer.
-
-    This is the single shared entry point used by:
-      - the main UI "Unlock" button (GardenApp)
-      - the Trait Inheritance Explorer export/test button
-
-    Returns: {"law1": bool, "law2": bool, "law3": bool, "new": ["law1","law2","law3"]}
-    Also updates app.law*_ever_discovered and app.law2_ratio_ui / app.law3_ratio_ui, and refreshes
-    app._update_law_status_label() when present.
-    """
-
-    # Use existing archive unless provided
-    archive = archive if archive is not None else getattr(app, "archive", None)
-    if not isinstance(archive, dict):
-        return {"law1": False, "law2": False, "law3": False, "new": []}
-    plants = archive.get("plants", {})
-    if not isinstance(plants, dict) or not plants:
-        return {"law1": False, "law2": False, "law3": False, "new": []}
-
-    # Respect genotype reveal session rule (no credit once alleles were revealed)
-    revealed = bool(getattr(app, "_genotype_revealed", False))
-    if revealed and allow_credit:
-        # Genotype was peeked — can still detect for display but don't credit
-        allow_credit = False
-
-    # If pid wasn't provided, try to infer it like the main UI would.
-    if pid in (None, "", -1):
-        pid = getattr(app, "law_context_pid", None)
-
-    # Robust snapshot fetch (string/int keys)
-    def _get_snap_local(pid_):
-        if pid_ in (None, "", -1):
-            return None
-        # try exact
-        if pid_ in plants:
-            return plants.get(pid_)
-        # try str/int forms
-        try:
-            si = str(pid_)
-            if si in plants:
-                return plants.get(si)
-        except Exception:
-            pass
-        try:
-            ii = int(pid_)
-            if ii in plants:
-                return plants.get(ii)
-        except Exception:
-            pass
-        return None
-
-    snap = _get_snap_local(pid)
-    if not snap:
-        return {"law1": False, "law2": False, "law3": False, "new": []}
-
-    # ---- helper: parent extraction (same as TraitInheritanceExplorer._parents_from_snapshot) ----
-    def _parents_from_snapshot(snap_obj):
-        if not isinstance(snap_obj, dict):
-            return (getattr(snap_obj, "mother_id", None), getattr(snap_obj, "father_id", None))
-
-        MOTHER_KEYS = [
-            "mother_id","mother","maternal_id","mom_id",
-            "female_parent","female_id","dam_id",
-            "seed_parent_id","seed_parent","maternal_pid","female",
-        ]
-        FATHER_KEYS = [
-            "father_id","father","paternal_id","dad_id",
-            "male_parent","male_id","sire_id",
-            "pollen_donor_id","pollen_source_id","pollen_parent_id","pollinator_id",
-            "pollen_donor","pollen_source","pollen",
-        ]
-        NESTED = ["pollination","cross","cross_info","seed_source","source_pod","source_cross","repro","reproduction"]
-
-        def pick(dct, keys):
-            for k in keys:
-                if isinstance(dct, dict) and k in dct and dct[k] not in (None, "", -1):
-                    return dct[k]
-            return None
-
-        mid_ = pick(snap_obj, MOTHER_KEYS)
-        fid_ = pick(snap_obj, FATHER_KEYS)
-        if mid_ is None or fid_ is None:
-            for nk in NESTED:
-                nd = snap_obj.get(nk)
-                if isinstance(nd, dict):
-                    if mid_ is None:
-                        mid_ = pick(nd, MOTHER_KEYS)
-                    if fid_ is None:
-                        fid_ = pick(nd, FATHER_KEYS)
-        return (mid_, fid_)
-
-    # ---- helpers used by the TIE law logic ----
-    def _g(s, key, default=None):
-        if isinstance(s, dict):
-            return s.get(key, default)
-        try:
-            return getattr(s, key, default)
-        except Exception:
-            return default
-
-    try:
-        mid, fid = _parents_from_snapshot(snap)
-    except Exception:
-        mid, fid = (_g(snap, "mother_id", None), _g(snap, "father_id", None))
-
-    try:
-        traits = dict(snap.get("traits", {}) or {}) if isinstance(snap, dict) else dict(getattr(snap, "traits", {}) or {})
-    except Exception:
-        traits = {}
-
-    # Snapshot lookup helper for IDs
-    def _get_arch_snap(pid_):
-        return _get_snap_local(pid_)
-
-    # ---------------------- BEGIN: copied TIE law-test logic ----------------------
-    # (This block is intentionally mirrored from TraitInheritanceExplorer._export_selected_traits)
-
-    def _geno_from_snap_law2(s):
-        try:
-            if isinstance(s, dict):
-                g = s.get("genotype") or {}
-            else:
-                g = getattr(s, "genotype", None) or {}
-        except Exception:
-            g = {}
-        return dict(g) if isinstance(g, dict) else {}
-
-    def _law1_cross_signature_for_trait(m_snap, f_snap, locus):
-        """Canonical cross signature (order-independent) for Law 1 tests."""
-        m_geno = _geno_from_snap_law2(m_snap)
-        f_geno = _geno_from_snap_law2(f_snap)
-        if not isinstance(m_geno, dict) or not isinstance(f_geno, dict):
-            return None
-
-        m_pair = m_geno.get(locus)
-        f_pair = f_geno.get(locus)
-        if not (isinstance(m_pair, (list, tuple)) and len(m_pair) >= 2):
-            return None
-        if not (isinstance(f_pair, (list, tuple)) and len(f_pair) >= 2):
-            return None
-
-        m_a1, m_a2 = m_pair[0], m_pair[1]
-        f_a1, f_a2 = f_pair[0], f_pair[1]
-
-        if not (m_a1 == m_a2 and f_a1 == f_a2):
-            return None
-        if m_a1 == f_a1:
-            return None
-
-        def _canon(pair):
-            a1, a2 = pair[0], pair[1]
-            return "".join(sorted([str(a1), str(a2)]))
-
-        return tuple(sorted([_canon(m_pair), _canon(f_pair)]))
-
-    revealed = bool(getattr(app, "_genotype_revealed", False))
-
-    law1_discovered = False
-    law1_reason = ""
-    law1_trait_name = ""
-    law1_dominant_value = ""  # the phenotype value that is dominant
-    law1_all_valid = []       # all (trait_key, dominant_value) pairs that qualify
-
-    law2_discovered = False
-    law2_reason = ""
-    law2_ratio_str = ""
-    law2_trait_name = ""
-    law2_dominant_value = ""  # the phenotype value that appears ~75% of the time
-    law2_all_valid = []       # all (trait_key, dominant_value) pairs that qualify
-    law2_all_valid_ratios = {}  # trait_key -> ratio_str for the qualifying traits
-
-    law3_discovered = False
-    law3_reason = ""
-    law3_ratio_str = ""
-    law3_trait_pair = ()
-    law3_all_valid_pairs = []   # all (tk1, tk2) pairs that pass the chi-square test
-    law3_all_valid_pairs_ratios = {}  # frozenset({tk1,tk2}) -> ratio string
-
-    trait_to_locus = {
-        "flower_color":  "A",
-        "pod_color":     "Gp",
-        "seed_color":    "I",
-        "seed_shape":    "R",
-        "plant_height":  "Le",
-    }
-    law_trait_keys = ["flower_color", "pod_color", "seed_color", "seed_shape", "plant_height"]
-
-    arch_plants = plants
-
-    # ---------------- Law 1 (Dominance) ----------------
-    if not revealed:
-        mother_snap = _get_arch_snap(mid)
-        father_snap = _get_arch_snap(fid)
-
-        if mother_snap and father_snap and mid not in (None, "", -1) and fid not in (None, "", -1) and str(mid) != str(fid):
-            try:
-                m_traits = dict(mother_snap.get("traits", {}) or {}) if isinstance(mother_snap, dict) else dict(getattr(mother_snap, "traits", {}) or {})
-            except Exception:
-                m_traits = {}
-            try:
-                f_traits = dict(father_snap.get("traits", {}) or {}) if isinstance(father_snap, dict) else dict(getattr(father_snap, "traits", {}) or {})
-            except Exception:
-                f_traits = {}
-
-            m_geno = _geno_from_snap_law2(mother_snap)
-            f_geno = _geno_from_snap_law2(father_snap)
-
-            dominant_candidates = []
-
-            for tk in law_trait_keys:
-                cv = str(traits.get(tk, "")).strip()
-                mv = str(m_traits.get(tk, "")).strip()
-                fv = str(f_traits.get(tk, "")).strip()
-
-                if not (cv and mv and fv and mv != fv and (cv == mv or cv == fv)):
-                    continue
-
-                loc = trait_to_locus.get(tk)
-                if not loc:
-                    continue
-
-                cross_sig = _law1_cross_signature_for_trait(mother_snap, father_snap, loc)
-                if cross_sig is None:
-                    continue
-
-                m_pair = m_geno.get(loc)
-                f_pair = f_geno.get(loc)
-                if not (isinstance(m_pair, (list, tuple)) and len(m_pair) >= 2 and isinstance(f_pair, (list, tuple)) and len(f_pair) >= 2):
-                    continue
-
-                m_a1, m_a2 = m_pair[0], m_pair[1]
-                f_a1, f_a2 = f_pair[0], f_pair[1]
-                if not (m_a1 == m_a2 and f_a1 == f_a2):
-                    continue
-                if m_a1 == f_a1:
-                    continue
-
-                same_pheno_total = 0
-                for _cid, csnap in arch_plants.items():
-                    if isinstance(csnap, dict) and not csnap.get("alive", True):
-                        continue
-
-                    smid, sfid = _parents_from_snapshot(csnap if isinstance(csnap, dict) else {})
-                    if smid in (None, "", -1) or sfid in (None, "", -1):
-                        continue
-
-                    m_snap2 = _get_arch_snap(smid)
-                    f_snap2 = _get_arch_snap(sfid)
-                    if not m_snap2 or not f_snap2:
-                        continue
-
-                    sig2 = _law1_cross_signature_for_trait(m_snap2, f_snap2, loc)
-                    if sig2 is None or sig2 != cross_sig:
-                        continue
-
-                    try:
-                        s_traits = csnap.get("traits", {}) if isinstance(csnap, dict) else getattr(csnap, "traits", {}) or {}
-                    except Exception:
-                        s_traits = {}
-                    sv = str(s_traits.get(tk, "")).strip()
-                    if sv == cv:
-                        same_pheno_total += 1
-
-                if same_pheno_total < LAW1_MIN_F1:
-                    continue
-
-                dominant_candidates.append((tk, cv, mv, fv, same_pheno_total))
-
-            if dominant_candidates:
-                law1_discovered = True
-                tk, cv, mv, fv, sib_count = dominant_candidates[0]
-                law1_trait_name = tk
-                law1_dominant_value = cv  # cv is the child's phenotype = the dominant value
-                # store ALL valid (trait_key, dominant_value) pairs for wizard validation
-                law1_all_valid = [(t, c) for t, c, *_ in dominant_candidates]
-                trait_label = tk.replace("_", " ")
-                law1_reason = (
-                    f"Observed in cross #{mid} × #{fid} for trait '{trait_label}': "
-                    f"parents {mv} × {fv} → offspring {cv} "
-                    f"in at least {sib_count + 1} F1 plants (including this plant), "
-                    f"from true-breeding parental lines."
-                )
-
-    # ---------------- Law 2 (Segregation) ----------------
-    try:
-        has_parents = (mid not in (None, "", -1) and fid not in (None, "", -1))
-    except Exception:
-        has_parents = False
-
-    parent_snap_m = _get_arch_snap(mid) if has_parents else None
-    parent_snap_f = _get_arch_snap(fid) if has_parents else None
-
-    def _law2_family_signature(parent_snap, gp_m, gp_f, locus):
-        parent_geno = _geno_from_snap_law2(parent_snap)
-        if not isinstance(parent_geno, dict):
-            return None
-        p_pair = parent_geno.get(locus)
-        if not (isinstance(p_pair, (list, tuple)) and len(p_pair) >= 2):
-            return None
-        pa1, pa2 = p_pair[0], p_pair[1]
-        if pa1 == pa2:
-            return None
-
-        gm_geno = _geno_from_snap_law2(gp_m)
-        gf_geno = _geno_from_snap_law2(gp_f)
-        if not isinstance(gm_geno, dict) or not isinstance(gf_geno, dict):
-            return None
-
-        m_pair = gm_geno.get(locus)
-        f_pair = gf_geno.get(locus)
-        if not (isinstance(m_pair, (list, tuple)) and len(m_pair) >= 2):
-            return None
-        if not (isinstance(f_pair, (list, tuple)) and len(f_pair) >= 2):
-            return None
-
-        m_a1, m_a2 = m_pair[0], m_pair[1]
-        f_a1, f_a2 = f_pair[0], f_pair[1]
-        if not (m_a1 == m_a2 and f_a1 == f_a2):
-            return None
-        # REMOVED: if m_a1 == f_a1: return None
-        # This check was too restrictive - it rejected selfed true-breeding lines.
-        # Mendel used selfing to establish homozygous lines, then crossed them.
-        # As long as grandparents are homozygous and parent is heterozygous,
-        # we have valid Mendelian segregation regardless of whether grandparents
-        # came from AA × aa or from selfed AA × AA lines.
-
-        def _canon(pair):
-            a1, a2 = pair[0], pair[1]
-            return "".join(sorted([str(a1), str(a2)]))
-
-        return tuple(sorted([_canon(m_pair), _canon(f_pair)]))
-
-    def _get_grandparents_for_parent(parent_snap):
-        try:
-            pmid, pfid = _parents_from_snapshot(parent_snap)
-        except Exception:
-            pmid, pfid = (_g(parent_snap, "mother_id", None), _g(parent_snap, "father_id", None))
-        gp_m = _get_arch_snap(pmid)
-        gp_f = _get_arch_snap(pfid)
-        return gp_m, gp_f
-
-    gp_m = gp_f = None
-    parent_snap = None
-    parent_traits = None
-
-    # Choose a representative "F1 parent" for Law2/3: prefer selfing if possible else sib-mating
-    if not revealed and parent_snap_m and parent_snap_f:
-        # If selfed: mother==father -> parent is that plant
-        if str(mid) == str(fid):
-            parent_snap = parent_snap_m
-        else:
-            # otherwise pick mother as "parent" reference; Law2/3 code uses family signatures anyway
-            parent_snap = parent_snap_m
-
-        try:
-            parent_traits = dict(parent_snap.get("traits", {}) or {}) if isinstance(parent_snap, dict) else dict(getattr(parent_snap, "traits", {}) or {})
-        except Exception:
-            parent_traits = {}
-
-        gp_m, gp_f = _get_grandparents_for_parent(parent_snap)
-
-    if not revealed and parent_snap and gp_m and gp_f:
-        parent_geno = _geno_from_snap_law2(parent_snap)
-        # need a valid heterozygous locus with opposite homozygous grandparents and enough F2
-        for tk in law_trait_keys:
-            loc = trait_to_locus.get(tk)
-            if not loc:
-                continue
-
-            fam_sig = _law2_family_signature(parent_snap, gp_m, gp_f, loc)
-            if fam_sig is None:
-                continue
-
-            # collect F2 offspring for this family
-            dom_pheno = str(parent_traits.get(tk, "")).strip().lower()
-            counts = {"dom": 0, "rec": 0}
-            total = 0
-
-            for _cid2, csnap2 in arch_plants.items():
-                if isinstance(csnap2, dict) and not csnap2.get("alive", True):
-                    continue
-
-                smid2, sfid2 = _parents_from_snapshot(csnap2 if isinstance(csnap2, dict) else {})
-                if smid2 in (None, "", -1) or sfid2 in (None, "", -1):
-                    continue
-
-                # F2 must come from Aa×Aa parents belonging to this family signature
-                pm = _get_arch_snap(smid2)
-                pf = _get_arch_snap(sfid2)
-                if not pm or not pf:
-                    continue
-
-                # parent pair must be heterozygous at loc
-                pgm = _geno_from_snap_law2(pm)
-                pgf = _geno_from_snap_law2(pf)
-                pair_m = pgm.get(loc)
-                pair_f = pgf.get(loc)
-                if not (isinstance(pair_m, (list, tuple)) and len(pair_m) >= 2 and isinstance(pair_f, (list, tuple)) and len(pair_f) >= 2):
-                    continue
-                if len(set(pair_m[:2])) != 2 or len(set(pair_f[:2])) != 2:
-                    continue
-
-                # grandparents for each parent must match family signature
-                gp_m2, gp_f2 = _get_grandparents_for_parent(pm)
-                gp_m3, gp_f3 = _get_grandparents_for_parent(pf)
-                sig_m = _law2_family_signature(pm, gp_m2, gp_f2, loc) if (gp_m2 and gp_f2) else None
-                sig_f = _law2_family_signature(pf, gp_m3, gp_f3, loc) if (gp_m3 and gp_f3) else None
-                if sig_m != fam_sig or sig_f != fam_sig:
-                    continue
-
-                # classify phenotype
-                try:
-                    ctraits2 = csnap2.get("traits", {}) if isinstance(csnap2, dict) else getattr(csnap2, "traits", {}) or {}
-                except Exception:
-                    ctraits2 = {}
-                ph = str(ctraits2.get(tk, "")).strip().lower()
-                if not ph:
-                    continue
-
-                total += 1
-                if ph == dom_pheno:
-                    counts["dom"] += 1
-                else:
-                    counts["rec"] += 1
-
-            if total < LAW2_MIN_N:
-                continue
-
-            dom_frac = counts["dom"] / float(total) if total else 0.0
-            if LAW2_DOM_FRAC_MIN <= dom_frac <= LAW2_DOM_FRAC_MAX:
-                law2_discovered = True
-                trait_label = tk.replace("_", " ")
-                law2_trait_name = tk  # store raw key so wizard can compare directly
-                law2_dominant_value = dom_pheno
-
-                # ratio string: dominant:recessive, scaled so recessive=1 if possible
-                try:
-                    d = counts["dom"]
-                    r = counts["rec"]
-                    if r > 0:
-                        x = d / float(r)
-                        x_str = (f"{x:.2f}").replace(".", ",")
-                        law2_ratio_str = f"{x_str}:1"
-                    else:
-                        law2_ratio_str = f"{d}:{r}"
-                except Exception:
-                    law2_ratio_str = ""
-
-                law2_reason = (
-                    f"Observed in F2 offspring (N = {total}) for trait '{trait_label}': "
-                    f"dominant vs recessive phenotypes appear close to 3:1."
-                )
-                law2_all_valid.append((tk, dom_pheno))
-                law2_all_valid_ratios[tk] = law2_ratio_str
-                # don't break — collect all valid traits
-
-    # ---------------- Law 3 (Independent Assortment) ----------------
-    if not revealed and parent_snap and gp_m and gp_f and arch_plants and not law3_discovered:
-        parent_geno = _geno_from_snap_law2(parent_snap)
-
-        def _law3_family_signature(parent_snap_, gp_m_, gp_f_, loc1, loc2):
-            parent_geno_ = _geno_from_snap_law2(parent_snap_)
-            if not isinstance(parent_geno_, dict):
-                return None
-            p1 = parent_geno_.get(loc1)
-            p2 = parent_geno_.get(loc2)
-            if not (isinstance(p1, (list, tuple)) and len(p1) >= 2 and isinstance(p2, (list, tuple)) and len(p2) >= 2):
-                return None
-            if len(set(p1[:2])) != 2 or len(set(p2[:2])) != 2:
-                return None
-
-            gm = _geno_from_snap_law2(gp_m_)
-            gf = _geno_from_snap_law2(gp_f_)
-            if not isinstance(gm, dict) or not isinstance(gf, dict):
-                return None
-
-            def _canon(pair):
-                a1, a2 = pair[0], pair[1]
-                return "".join(sorted([str(a1), str(a2)]))
-
-            key1 = tuple(sorted([_canon(gm.get(loc1, ('?','?'))), _canon(gf.get(loc1, ('?','?')))]))
-            key2 = tuple(sorted([_canon(gm.get(loc2, ('?','?'))), _canon(gf.get(loc2, ('?','?')))]))
-            return tuple(sorted([(loc1, key1), (loc2, key2)]))
-
-        from itertools import combinations
-        from collections import Counter
-
-        candidate_traits = [tk for tk in law_trait_keys if tk in (parent_traits or {}) and trait_to_locus.get(tk)]
-
-        for tk1, tk2 in combinations(candidate_traits, 2):
-            if {"pod_color", "seed_shape"} == {tk1, tk2}:
-                continue
-
-            loc1 = trait_to_locus.get(tk1)
-            loc2 = trait_to_locus.get(tk2)
-            if not loc1 or not loc2:
-                continue
-
-            pair1 = parent_geno.get(loc1)
-            pair2 = parent_geno.get(loc2)
-            if not (isinstance(pair1, (list, tuple)) and len(pair1) >= 2 and isinstance(pair2, (list, tuple)) and len(pair2) >= 2):
-                continue
-            if len(set(pair1[:2])) != 2 or len(set(pair2[:2])) != 2:
-                continue
-
-            fam_sig = _law3_family_signature(parent_snap, gp_m, gp_f, loc1, loc2)
-            if fam_sig is None:
-                continue
-
-            combo_counts = Counter()
-            dom1 = str((parent_traits or {}).get(tk1, "")).strip().lower()
-            dom2 = str((parent_traits or {}).get(tk2, "")).strip().lower()
-
-            for _cid2, csnap2 in arch_plants.items():
-                if isinstance(csnap2, dict) and not csnap2.get("alive", True):
-                    continue
-
-                smid2, sfid2 = _parents_from_snapshot(csnap2 if isinstance(csnap2, dict) else {})
-                if smid2 in (None, "", -1) or sfid2 in (None, "", -1):
-                    continue
-
-                pm = _get_arch_snap(smid2)
-                pf = _get_arch_snap(sfid2)
-                if not pm or not pf:
-                    continue
-
-                # both parents must belong to same dihybrid family signature
-                gp_m2, gp_f2 = _get_grandparents_for_parent(pm)
-                gp_m3, gp_f3 = _get_grandparents_for_parent(pf)
-                sig_m = _law3_family_signature(pm, gp_m2, gp_f2, loc1, loc2) if (gp_m2 and gp_f2) else None
-                sig_f = _law3_family_signature(pf, gp_m3, gp_f3, loc1, loc2) if (gp_m3 and gp_f3) else None
-                if sig_m != fam_sig or sig_f != fam_sig:
-                    continue
-
-                try:
-                    ctraits2 = csnap2.get("traits", {}) if isinstance(csnap2, dict) else getattr(csnap2, "traits", {}) or {}
-                except Exception:
-                    ctraits2 = {}
-                ph1 = str(ctraits2.get(tk1, "")).strip().lower()
-                ph2 = str(ctraits2.get(tk2, "")).strip().lower()
-                if not ph1 or not ph2:
-                    continue
-
-                a = "D" if ph1 == dom1 else "r"
-                b = "D" if ph2 == dom2 else "r"
-                combo_counts[(a, b)] += 1
-
-            needed_keys = [("D","D"), ("D","r"), ("r","D"), ("r","r")]
-            total = sum(combo_counts.values())
-            if total < LAW3_MIN_N:
-                continue
-            if any(combo_counts[k] == 0 for k in needed_keys):
-                continue
-
-            expected_ratios = {("D","D"): 9, ("D","r"): 3, ("r","D"): 3, ("r","r"): 1}
-            chi2 = 0.0
-            for k in needed_keys:
-                obs = combo_counts[k]
-                exp = expected_ratios[k] * (total / 16.0)
-                if exp <= 0:
-                    continue
-                diff = obs - exp
-                chi2 += (diff * diff) / exp
-
-            if chi2 <= LAW3_CHI2_MAX:
-                law3_discovered = True
-                trait_label1 = tk1.replace("_", " ")
-                trait_label2 = tk2.replace("_", " ")
-
-                try:
-                    vals = [combo_counts[k] for k in needed_keys]
-                    total2 = sum(vals)
-                    if total2 > 0:
-                        scaled = [(v / total2) * 16.0 for v in vals]
-                        pretty_parts = [f"{x:.1f}".replace(".", ",") for x in scaled]
-                        law3_ratio_str = " : ".join(pretty_parts) + " (scaled to 16)"
-                    else:
-                        law3_ratio_str = ""
-                    law3_trait_pair = (trait_label1, trait_label2)
-                except Exception:
-                    law3_ratio_str = ""
-                    law3_trait_pair = (trait_label1, trait_label2)
-
-                # accumulate ALL valid pairs (for wizard validation)
-                law3_all_valid_pairs.append((tk1, tk2))
-                law3_all_valid_pairs_ratios[frozenset({tk1, tk2})] = law3_ratio_str
-
-                try:
-                    cross_label = f"selfed F1 plant #{mid}" if str(mid) == str(fid) else f"F1 cross #{mid}×{fid}"
-                except Exception:
-                    cross_label = "F1 cross #?"
-
-                law3_reason = (
-                    f"Observed in dihybrid F2 offspring of {cross_label} "
-                    f"for traits '{trait_label1}' and '{trait_label2}': "
-                    f"the four phenotype combinations appear in an approximately 9:3:3:1 ratio (N = {total})."
-                )
-
-                # don't break — keep scanning to collect all valid pairs
-
-    # ---------------- Apply discoveries to app + UI ----------------
-    new = []
-
-    if not revealed:
-        if law1_discovered and not getattr(app, "law1_ever_discovered", False) \
-                and (target_law is None or target_law == 1):
-            setattr(app, "law1_ever_discovered", True)
-            setattr(app, "law1_first_plant", pid)
-            new.append("law1")
-            if toast and hasattr(app, "_toast"):
-                try:
-                    app._toast(f"Law 1 (Dominance) discovered from plant #{pid}!", level="info")
-                except Exception:
-                    pass
-
-        if law2_discovered and not getattr(app, "law2_ever_discovered", False) \
-                and (target_law is None or target_law == 2):
-            setattr(app, "law2_ever_discovered", True)
-            setattr(app, "law2_first_plant", pid)
-            new.append("law2")
-            if toast and hasattr(app, "_toast"):
-                try:
-                    app._toast(f"Law 2 (Segregation) discovered from plant #{pid}!", level="info")
-                except Exception:
-                    pass
-
-        if law3_discovered and not getattr(app, "law3_ever_discovered", False) \
-                and (target_law is None or target_law == 3):
-            setattr(app, "law3_ever_discovered", True)
-            setattr(app, "law3_first_plant", pid)
-            new.append("law3")
-            if toast and hasattr(app, "_toast"):
-                try:
-                    app._toast(f"Law 3 (Independent Assortment) discovered from plant #{pid}!", level="info")
-                except Exception:
-                    pass
-
-    # Push ratio info to the main app for the top-bar UI
-    try:
-        if not revealed:
-            if law2_discovered:
-                if not law2_ratio_str:
-                    # best-effort fallback
-                    law2_ratio_str = "Ratio __:__"
-                setattr(app, "law2_ratio_ui", law2_ratio_str)
-            if law3_discovered and law3_ratio_str:
-                setattr(app, "law3_ratio_ui", law3_ratio_str)
-            if hasattr(app, "_update_law_status_label"):
-                app._update_law_status_label()
-    except Exception:
-        pass
-
-    # Stash law ratio info into the archive snapshot
-    try:
-        if isinstance(snap, dict):
-            if law2_discovered and law2_ratio_str:
-                snap["law2_ratio"] = law2_ratio_str
-                if law2_trait_name:
-                    snap["law2_trait"] = law2_trait_name
-            if law3_discovered and law3_ratio_str:
-                snap["law3_ratio"] = law3_ratio_str
-                if law3_trait_pair:
-                    snap["law3_traits"] = f"{law3_trait_pair[0]} × {law3_trait_pair[1]}"
-    except Exception:
-        pass
-
-    return {
-        "law1": bool(law1_discovered),
-        "law2": bool(law2_discovered),
-        "law3": bool(law3_discovered),
-        "new": new,
-        # expose which specific trait/pair triggered each law (used by wizard)
-        "law1_trait": law1_trait_name if law1_discovered else None,
-        "law1_dominant_value": law1_dominant_value if law1_discovered else None,
-        "law1_all_valid": law1_all_valid if law1_discovered else [],
-        "law2_trait": law2_trait_name if law2_discovered else None,
-        "law2_dominant_value": law2_dominant_value if law2_discovered else None,
-        "law2_all_valid": law2_all_valid if law2_discovered else [],
-        "law2_all_valid_ratios": law2_all_valid_ratios if law2_discovered else {},
-        "law3_traits": tuple(law3_trait_pair) if (law3_discovered and law3_trait_pair) else None,
-        "law3_all_valid_pairs": law3_all_valid_pairs if law3_discovered else [],
-        "law3_all_valid_pairs_ratios": law3_all_valid_pairs_ratios if law3_discovered else {},
-    }
-
-# =============================================================================
-# Mendelian law unlock thresholds (single source of truth)
-# =============================================================================
-
-# Law 1 (Dominance): how many phenotype-only F1 offspring (same phenotype) needed
-LAW1_MIN_F1 = 16
-
-# Law 2 (Segregation, ~3:1): minimum F2 sample size and acceptable dominant fraction band
-LAW2_MIN_N = 65
-LAW2_DOM_FRAC_MIN = 0.677  # 2.1:1  (2.1/3.1)
-LAW2_DOM_FRAC_MAX = 0.796  # 3.9:1  (3.9/4.9)
-
-# Law 3 (Independent Assortment, ~9:3:3:1): minimum dihybrid F2 sample size and chi-square threshold
-LAW3_MIN_N = 80
-LAW3_CHI2_MAX = 4.0
+    return shared_test_mendelian_laws(
+        app,
+        archive=archive,
+        pid=pid,
+        allow_credit=allow_credit,
+        toast=toast,
+        target_law=target_law,
+    )
 
 class TraitInheritanceExplorer(tk.Toplevel):
-    BG = "#0c1a21"
-    PANEL = "#0f2230"
-    CARD = "#102633"
-    FG = "#e8f0f5"
-    MUTED = "#a8bcc9"
-    ACCENT = "#1f6aa5"
+    BG = theme.BROWSER_BG
+    PANEL = theme.BROWSER_PANEL
+    CARD = theme.BROWSER_CARD
+    FG = theme.BROWSER_FG
+    MUTED = theme.BROWSER_MUTED
+    ACCENT = theme.BROWSER_ACCENT
+    CANVAS_BG = theme.BROWSER_CANVAS_BG
     PAD = 10
 
     # --- Background tints for pods (applied to whole pod card) ---
-    POD_TINT_GREEN = "#2d5145"   # slightly less green
-    POD_TINT_YELLOW = "#6a5a16"  # strong yellow/olive
+    POD_TINT_GREEN = theme.POD_TINT_GREEN
+    POD_TINT_YELLOW = theme.POD_TINT_YELLOW
 
     def _pod_tint_from_color(self, color_str):
         s = str(color_str or "").lower()
@@ -861,6 +159,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
         tk.Toplevel.__init__(self, parent_window)
         self.app = app
         self.title("Trait Inheritance Explorer")
+        theme.apply_window_options(self)
         self.configure(bg=self.BG)
         self.minsize(1024, 600)
 
@@ -888,41 +187,47 @@ class TraitInheritanceExplorer(tk.Toplevel):
         self._style.configure(
             "Toolbar.TButton",
             padding=(10, 4),
-            foreground=self.FG,
-            background=self.CARD
+            foreground=theme.BUTTON_FG,
+            background=theme.BUTTON_BG,
+            font=(theme.UI_FONT, 10, "bold"),
+            relief="flat",
         )
         self._style.map(
             "Toolbar.TButton",
-            foreground=[("active", self.FG), ("pressed", self.FG)],
-            background=[("active", self.CARD), ("pressed", self.CARD)],
+            foreground=[("active", theme.BUTTON_FG), ("pressed", theme.BUTTON_FG)],
+            background=[("active", theme.BUTTON_HOVER), ("pressed", theme.BUTTON_ACTIVE)],
         )
 
         # Action button style (blue accent — Best Fit, etc.)
         self._style.configure(
             "Action.TButton",
             padding=(10, 4),
-            foreground=self.FG,
-            background="#1e4d6b",
+            foreground=theme.BUTTON_FG,
+            background=theme.BUTTON_BG,
+            font=(theme.UI_FONT, 10, "bold"),
+            relief="flat",
         )
         self._style.map(
             "Action.TButton",
-            foreground=[("active", self.FG), ("pressed", self.FG)],
-            background=[("active", "#2a6080"), ("pressed", "#163c55")],
+            foreground=[("active", theme.BUTTON_FG), ("pressed", theme.BUTTON_FG)],
+            background=[("active", theme.BUTTON_HOVER), ("pressed", theme.BUTTON_ACTIVE)],
         )
 
         # Nav button style (slightly lighter blue — pagination ◀ ▶)
         self._style.configure(
             "Nav.TButton",
             padding=(8, 3),
-            foreground="#ffffff",
-            background="#2a5a7a",
+            foreground=theme.BUTTON_FG,
+            background=theme.BUTTON_BG,
+            font=(theme.UI_FONT, 10, "bold"),
+            relief="flat",
         )
         self._style.map(
             "Nav.TButton",
-            foreground=[("active", "#ffffff"), ("pressed", "#ffffff"),
-                        ("disabled", "#607090")],
-            background=[("active", "#3a6e8e"), ("pressed", "#1e4a62"),
-                        ("disabled", "#1a3040")],
+            foreground=[("active", theme.BUTTON_FG), ("pressed", theme.BUTTON_FG),
+                        ("disabled", theme.TEXT_MUTED)],
+            background=[("active", theme.BUTTON_HOVER), ("pressed", theme.BUTTON_ACTIVE),
+                        ("disabled", theme.PANEL_ACCENT)],
         )
 
         def _mkbtn(parent, text, command, **extra):
@@ -932,7 +237,15 @@ class TraitInheritanceExplorer(tk.Toplevel):
                 return ttk.Button(parent, text=text, command=command, style=style)
             else:
                 # On Windows/Linux classic tk.Button styling is fine
-                kw = dict(bg=self.CARD, fg=self.FG, relief="groove")
+                kw = dict(
+                    bg=theme.BUTTON_BG,
+                    fg=theme.BUTTON_FG,
+                    activebackground=theme.BUTTON_HOVER,
+                    activeforeground=theme.BUTTON_FG,
+                    relief="flat",
+                    bd=0,
+                    highlightthickness=0,
+                )
                 kw.update(extra)
                 kw.pop("style", None)
                 return tk.Button(parent, text=text, command=command, **kw)
@@ -948,14 +261,14 @@ class TraitInheritanceExplorer(tk.Toplevel):
         pw = ttk.Panedwindow(self, orient="horizontal")
         pw.pack(fill="both", expand=True, padx=self.PAD, pady=(4, self.PAD))
 
-        left = tk.Frame(pw, bg=self.PANEL, highlightthickness=1, highlightbackground="#153242")
+        left = tk.Frame(pw, bg=self.PANEL, highlightthickness=1, highlightbackground=theme.BROWSER_BORDER)
         pw.add(left, weight=1)
 
         left_header = tk.Frame(left, bg=self.PANEL)
         left_header.pack(fill="x", padx=self.PAD, pady=(self.PAD, 6))
-        self.lbl_left_title = tk.Label(left_header, text="—", bg=self.PANEL, fg=self.FG, font=("Segoe UI", 14, "bold"))
+        self.lbl_left_title = tk.Label(left_header, text="—", bg=self.PANEL, fg=self.FG, font=(theme.DISPLAY_FONT, 15, "bold"))
         self.lbl_left_title.pack(anchor="w")
-        self.lbl_left_parents = tk.Label(left_header, text="", bg=self.PANEL, fg=self.MUTED, font=("Segoe UI", 12))
+        self.lbl_left_parents = tk.Label(left_header, text="", bg=self.PANEL, fg=self.MUTED, font=(theme.UI_FONT, 12))
         self.lbl_left_parents.pack(anchor="w", pady=(2,0))
 
         # ✅ Proper traits box for the explorer
@@ -969,7 +282,15 @@ class TraitInheritanceExplorer(tk.Toplevel):
         list_box.pack(fill="both", expand=False, padx=self.PAD, pady=(0, self.PAD))
         list_wrap = tk.Frame(list_box, bg=self.PANEL)
         list_wrap.pack(fill="both", expand=True, padx=6, pady=6)
-        self.listbox = tk.Listbox(list_wrap, height=10)
+        self.listbox = tk.Listbox(
+            list_wrap,
+            height=10,
+            bg=theme.LISTBOX_BG,
+            fg=self.FG,
+            selectbackground=theme.BUTTON_BG,
+            selectforeground=theme.BUTTON_FG,
+            highlightthickness=0,
+        )
         self.listbox.pack(side="left", fill="both", expand=True)
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
         sb = tk.Scrollbar(list_wrap, command=self.listbox.yview)
@@ -977,7 +298,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
         self.listbox.config(yscrollcommand=sb.set)
 
         # ── Right pane: fixed lineage (left) + switching tabs (right) ───────
-        right_pane = tk.Frame(pw, bg=self.PANEL, highlightthickness=1, highlightbackground="#153242")
+        right_pane = tk.Frame(pw, bg=self.PANEL, highlightthickness=1, highlightbackground=theme.BROWSER_BORDER)
         pw.add(right_pane, weight=5)
 
         # Horizontal split: lineage always-visible on left, tab switcher on right
@@ -987,13 +308,13 @@ class TraitInheritanceExplorer(tk.Toplevel):
         self._right_split = right_split   # saved so _auto_resize_window can adjust sash
 
         # ── Fixed lineage pane (left — always visible) ────────────────────────
-        lineage_pane = tk.Frame(right_split, bg="#0b1a22", highlightthickness=0)
+        lineage_pane = tk.Frame(right_split, bg=self.CANVAS_BG, highlightthickness=0)
         right_split.add(lineage_pane, width=500)
 
-        canvas_frame = tk.Frame(lineage_pane, bg="#0b1a22", highlightthickness=0)
+        canvas_frame = tk.Frame(lineage_pane, bg=self.CANVAS_BG, highlightthickness=0)
         canvas_frame.pack(fill="both", expand=True, padx=self.PAD, pady=self.PAD)
 
-        self.canvas = tk.Canvas(canvas_frame, bg="#0b1a22", highlightthickness=0)
+        self.canvas = tk.Canvas(canvas_frame, bg=self.CANVAS_BG, highlightthickness=0)
         _tree_vscroll = tk.Scrollbar(canvas_frame, orient="vertical",   command=self.canvas.yview)
         _tree_hscroll = tk.Scrollbar(canvas_frame, orient="horizontal", command=self.canvas.xview)
         self.canvas.configure(yscrollcommand=_tree_vscroll.set, xscrollcommand=_tree_hscroll.set)
@@ -1028,35 +349,35 @@ class TraitInheritanceExplorer(tk.Toplevel):
         )
         nb_style.configure(
             "TIE.TNotebook.Tab",
-            background="#0f2535",
-            foreground="#5a8fa8",
+            background=theme.BROWSER_TAB_BG,
+            foreground=theme.TEXT_MUTED,
             padding=[12, 5],
-            font=("Segoe UI", 11),
+            font=(theme.UI_FONT, 11),
             borderwidth=0,
-            focuscolor="#1e6fa0",
+            focuscolor=theme.BROWSER_TAB_SELECTED,
             focusthickness=0,
             relief="flat",
         )
         nb_style.map(
             "TIE.TNotebook.Tab",
-            background=[("selected", "#1e6fa0"), ("active", "#16506e")],
-            foreground=[("selected", "#ffffff"),  ("active",  "#cce8f5")],
+            background=[("selected", theme.BROWSER_TAB_SELECTED), ("active", theme.BROWSER_TAB_ACTIVE)],
+            foreground=[("selected", theme.BROWSER_TAB_SELECTED_FG),  ("active",  theme.TEXT_PRIMARY)],
             padding=[("selected", [16, 7])],
-            font=[("selected", ("Segoe UI", 12, "bold"))],
+            font=[("selected", (theme.UI_FONT, 12, "bold"))],
             expand=[("selected", [0, 0, 0, 2])],
-            focuscolor=[("selected", "#1e6fa0"), ("active", "#16506e")],
+            focuscolor=[("selected", theme.BROWSER_TAB_SELECTED), ("active", theme.BROWSER_TAB_ACTIVE)],
             relief=[("selected", "flat"), ("active", "flat")],
         )
 
         # Style for Punnett title trait selectors (macOS uses ttk.Menubutton)
-        _title_font = ("Helvetica Neue", 15, "bold") if getattr(self, "_is_mac", False) else ("Segoe UI", 14, "bold")
+        _title_font = ("Helvetica Neue", 15, "bold") if getattr(self, "_is_mac", False) else (theme.DISPLAY_FONT, 14, "bold")
         nb_style.configure("TraitTitle.TMenubutton",
                             font=_title_font,
                             padding=[10, 5],
                             relief="flat")
         nb_style.map("TraitTitle.TMenubutton",
-                     background=[("active", "#1e6fa0"), ("!active", "#16405a")],
-                     foreground=[("active", "#ffffff"), ("!active", "#cce8f5")],
+                     background=[("active", theme.BROWSER_TAB_SELECTED), ("!active", theme.BROWSER_TAB_BG)],
+                     foreground=[("active", theme.BROWSER_TAB_SELECTED_FG), ("!active", theme.TEXT_PRIMARY)],
                      relief=[("active", "flat"), ("!active", "flat")])
 
         self.tie_notebook = ttk.Notebook(tabs_pane, style="TIE.TNotebook")
@@ -1075,8 +396,8 @@ class TraitInheritanceExplorer(tk.Toplevel):
         self._shared_toolbar = shared_toolbar
         for label in ("Flowers", "Pod color", "Pod shape", "Seed color", "Seed shape", "Height"):
             rb = tk.Radiobutton(shared_toolbar, text=label, variable=self.trait_mode, value=label,
-                                bg=self.PANEL, fg=self.FG, selectcolor=self.CARD, activebackground=self.PANEL,
-                                indicatoron=True, font=("Segoe UI", 10),
+                                bg=self.PANEL, fg=self.FG, selectcolor=theme.LAW_BG, activebackground=theme.PANEL_ALT,
+                                indicatoron=True, font=(theme.UI_FONT, 10),
                                 command=lambda: self._refresh_views())
             rb.pack(side="left", padx=(0, 12))
 
@@ -1092,8 +413,9 @@ class TraitInheritanceExplorer(tk.Toplevel):
                 self._render_siblings(pid_)
         self._pods_size_btn = tk.Button(
             shared_toolbar, text="－",
-            bg="#1e4d6b", fg=self.FG, relief="flat", bd=0,
-            font=("Segoe UI", 11, "bold"), padx=8, pady=0,
+            bg=theme.BUTTON_BG, fg=theme.BUTTON_FG, relief="flat", bd=0,
+            activebackground=theme.BUTTON_HOVER, activeforeground=theme.BUTTON_FG,
+            font=(theme.UI_FONT, 11, "bold"), padx=8, pady=0,
             command=_toggle_pods_size)
         # Packed/unpacked by _on_tab_changed; shown only on Pod Seeds tab
 
@@ -1101,8 +423,9 @@ class TraitInheritanceExplorer(tk.Toplevel):
         self._ratio_font_large = False
         self._ratio_size_btn = tk.Button(
             shared_toolbar, text="＋",
-            bg="#1e4d6b", fg=self.FG, relief="flat", bd=0,
-            font=("Segoe UI", 11, "bold"), padx=8, pady=0,
+            bg=theme.BUTTON_BG, fg=theme.BUTTON_FG, relief="flat", bd=0,
+            activebackground=theme.BUTTON_HOVER, activeforeground=theme.BUTTON_FG,
+            font=(theme.UI_FONT, 11, "bold"), padx=8, pady=0,
             command=lambda: self._toggle_ratio_font_size())
         # Packed/unpacked by _on_tab_changed; shown only on Trait Ratio tab
 
@@ -1181,12 +504,12 @@ class TraitInheritanceExplorer(tk.Toplevel):
 
         self._cross_mode = tk.StringVar(value="Monohybrid")
         tk.Label(cross_ctrl, text="Type:", bg=self.PANEL, fg=self.FG,
-                 font=("Segoe UI", 11, "bold")).pack(side="left")
+                 font=(theme.UI_FONT, 11, "bold")).pack(side="left")
         for _cm, _cv in (("Monohybrid  3:1", "Monohybrid"), ("Dihybrid  9:3:3:1", "Dihybrid")):
             tk.Radiobutton(cross_ctrl, text=_cm, variable=self._cross_mode, value=_cv,
-                           bg=self.PANEL, fg=self.FG, selectcolor=self.CARD,
-                           activebackground=self.PANEL, activeforeground=self.FG,
-                           font=("Segoe UI", 10),
+                           bg=self.PANEL, fg=self.FG, selectcolor=theme.LAW_BG,
+                           activebackground=theme.PANEL_ALT, activeforeground=self.FG,
+                           font=(theme.UI_FONT, 10),
                            command=lambda: self.after(10, self._on_cross_settings_changed)
                            ).pack(side="left", padx=(10, 0))
 
@@ -1207,8 +530,9 @@ class TraitInheritanceExplorer(tk.Toplevel):
                 command=self._cross_auto_detect)
         else:
             self._cross_best_btn = tk.Button(
-                cross_ctrl, text="\u27f3 Best fit", bg="#1e4d6b", fg=self.FG,
-                relief="flat", bd=0, font=("Segoe UI", 9), padx=10,
+                cross_ctrl, text="\u27f3 Best fit", bg=theme.BUTTON_BG, fg=theme.BUTTON_FG,
+                activebackground=theme.BUTTON_HOVER, activeforeground=theme.BUTTON_FG,
+                relief="flat", bd=0, font=(theme.UI_FONT, 9), padx=10,
                 command=self._cross_auto_detect)
         self._cross_best_btn.pack(side="left", padx=(16, 0))
 
@@ -1223,8 +547,9 @@ class TraitInheritanceExplorer(tk.Toplevel):
                 self._render_cross_tab(pid_)
         _punnett_size_btn = tk.Button(
             cross_ctrl, text="＋",
-            bg="#1e4d6b", fg=self.FG, relief="flat", bd=0,
-            font=("Segoe UI", 11, "bold"), padx=10, pady=1,
+            bg=theme.BUTTON_BG, fg=theme.BUTTON_FG, relief="flat", bd=0,
+            activebackground=theme.BUTTON_HOVER, activeforeground=theme.BUTTON_FG,
+            font=(theme.UI_FONT, 11, "bold"), padx=10, pady=1,
             command=_toggle_punnett_size)
         self._punnett_size_btn = _punnett_size_btn
         # packed/unpacked dynamically in _on_cross_settings_changed; shown only for Dihybrid
@@ -1237,7 +562,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
         _cross_vsb.pack(side="right", fill="y")
         _cross_hsb = tk.Scrollbar(_cross_scroll_wrap, orient="horizontal")
         _cross_hsb.pack(side="bottom", fill="x")
-        self.cross_canvas = tk.Canvas(_cross_scroll_wrap, bg="#0d1f2e",
+        self.cross_canvas = tk.Canvas(_cross_scroll_wrap, bg=self.CARD,
                                        highlightthickness=0,
                                        xscrollcommand=_cross_hsb.set,
                                        yscrollcommand=_cross_vsb.set)
@@ -1247,17 +572,17 @@ class TraitInheritanceExplorer(tk.Toplevel):
         self._cross_img_refs = []
 
         # Title frame is a child of cross_canvas so create_window works reliably
-        _CANVAS_BG = "#0d1f2e"
+        _CANVAS_BG = self.CARD
         cross_title_frame = tk.Frame(self.cross_canvas, bg=_CANVAS_BG)
         self._cross_title_frame = cross_title_frame
         _title_inner = cross_title_frame
 
         _is_mac = getattr(self, "_is_mac", False)
-        _tf    = ("Segoe UI", 14, "bold")
-        _bg_n  = "#16405a"
-        _bg_h  = "#1e6fa0"
-        _hl_n  = "#2a6080"
-        _hl_h  = "#3a9fca"
+        _tf    = (theme.DISPLAY_FONT, 14, "bold")
+        _bg_n  = theme.BROWSER_TAB_BG
+        _bg_h  = theme.BROWSER_TAB_SELECTED
+        _hl_n  = theme.BUTTON_HOVER
+        _hl_h  = theme.BUTTON_ACTIVE
 
         def _make_trait_btn(parent, var):
             """Return a Menubutton that looks like a title-style button."""
@@ -1281,8 +606,9 @@ class TraitInheritanceExplorer(tk.Toplevel):
 
         def _build_menu(btn, var):
             m = tk.Menu(btn, tearoff=0, bg=self.CARD, fg=self.FG,
-                        activebackground="#1e6fa0", activeforeground="#ffffff",
-                        font=("Segoe UI", 11))
+                        activebackground=theme.BROWSER_TAB_SELECTED,
+                        activeforeground=theme.BROWSER_TAB_SELECTED_FG,
+                        font=(theme.UI_FONT, 11))
             for _lbl in self._cross_trait_labels:
                 m.add_command(
                     label=_lbl,
@@ -1348,7 +674,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
         self.NODE_OUTER_W = 2
         self.LINK_W = 3
         self.NODE_LABEL_DX = 40
-        self.NODE_LABEL_FONT = ("Segoe UI", 12, "bold")
+        self.NODE_LABEL_FONT = (theme.UI_FONT, 12, "bold")
         self._seed_from_live()
         self._reload_ids()
 
@@ -3541,14 +2867,14 @@ class TraitInheritanceExplorer(tk.Toplevel):
             if trait_key in ("flowers", "flower", "flower_color"):
                 col = str(traits.get("flower_color", val)).lower()
                 try:
-                    p = trait_icon_path("flower_color", col)
+                    p = icon_loader.trait_icon_path("flower_color", col)
                 except Exception:
                     p = ""
                 if p:
                     if target_px:
                         im = _pil_load(p, target_px)
                     else:
-                        im = safe_image_scaled(p, sx, sy)
+                        im = icon_loader.safe_image_scaled(p, sx, sy)
                     if im is not None:
                         return im
 
@@ -3559,15 +2885,15 @@ class TraitInheritanceExplorer(tk.Toplevel):
                 _fp_candidates = []
                 for _col in ([col] if col else []) + ["purple", "white"]:
                     try:
-                        _fp_candidates.append(flower_icon_path_hi(pos, _col))
+                        _fp_candidates.append(icon_loader.flower_icon_path_hi(pos, _col))
                     except Exception:
                         pass
                     try:
-                        _fp_candidates.append(flower_icon_path(pos, _col))
+                        _fp_candidates.append(icon_loader.flower_icon_path(pos, _col))
                     except Exception:
                         pass
                 try:
-                    _fp_candidates.append(trait_icon_path("flower_position", pos))
+                    _fp_candidates.append(icon_loader.trait_icon_path("flower_position", pos))
                 except Exception:
                     pass
                 for p in _fp_candidates:
@@ -3586,7 +2912,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
                 s = "constricted" if "constrict" in s else ("inflated" if "inflate" in s else s)
                 for _pc in ([c] if c else []) + ["green", "yellow"]:
                     try:
-                        p = pod_shape_icon_path(s, _pc)
+                        p = icon_loader.pod_shape_icon_path(s, _pc)
                     except Exception:
                         p = ""
                     if p:
@@ -3597,28 +2923,28 @@ class TraitInheritanceExplorer(tk.Toplevel):
 
             # Generic trait icon
             try:
-                p = trait_icon_path(trait_key, val)
+                p = icon_loader.trait_icon_path(trait_key, val)
             except Exception:
                 p = ""
             if p:
                 if target_px:
                     im = _pil_load(p, target_px)
                 else:
-                    im = safe_image_scaled(p, sx, sy)
+                    im = icon_loader.safe_image_scaled(p, sx, sy)
                 if im is not None:
                     return im
 
             # Height synonyms
             if trait_key in ("height","plant_height"):
                 try:
-                    p = trait_icon_path("plant_height", val or traits.get("plant_height",""))
+                    p = icon_loader.trait_icon_path("plant_height", val or traits.get("plant_height",""))
                 except Exception:
                     p = ""
                 if p:
                     if target_px:
                         im = _pil_load(p, target_px)
                     else:
-                        im = safe_image_scaled(p, sx, sy)
+                        im = icon_loader.safe_image_scaled(p, sx, sy)
                     if im is not None:
                         return im
         except Exception:
@@ -4093,7 +3419,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
 
             except Exception as e:
                 c.create_text(20, 20, anchor="nw", text=f"Tree error: {e}",
-                              fill="#ffb4b4", font=("Segoe UI", 12, "bold"))
+                              fill=theme.BROWSER_WARNING, font=(theme.UI_FONT, 12, "bold"))
                 traceback.print_exc()
 
     def _render_traits(self, snap):
@@ -4182,21 +3508,21 @@ class TraitInheritanceExplorer(tk.Toplevel):
         for w in panel.winfo_children():
             w.destroy()
         # outer box
-        box = tk.Frame(panel, bg="#12303f",
-                       highlightthickness=2, highlightbackground="#2a5a7a")
+        box = tk.Frame(panel, bg=self.CARD,
+                       highlightthickness=2, highlightbackground=theme.BUTTON_BG)
         box.pack(fill="x", padx=10, pady=16)
         tk.Label(box, text="Total ratio",
-                 bg="#12303f", fg=self.MUTED,
-                 font=("Segoe UI", 11)).pack(pady=(10, 2))
+                 bg=self.CARD, fg=self.MUTED,
+                 font=(theme.UI_FONT, 11)).pack(pady=(10, 2))
         tk.Label(box, text=ratio_text,
-                 bg="#12303f", fg=self.FG,
-                 font=("Segoe UI", 14, "bold"),
+                 bg=self.CARD, fg=self.FG,
+                 font=(theme.DISPLAY_FONT, 14, "bold"),
                  wraplength=150, justify="center").pack(padx=8, pady=(0, 10))
         for lp in law_parts:
-            tk.Frame(panel, height=1, bg="#2a5a7a").pack(fill="x", padx=10, pady=(4, 4))
+            tk.Frame(panel, height=1, bg=theme.PANEL_ACCENT).pack(fill="x", padx=10, pady=(4, 4))
             tk.Label(panel, text=lp,
                      bg=self.PANEL, fg=self.MUTED,
-                     font=("Segoe UI", 10, "italic"),
+                     font=(theme.UI_FONT, 10, "italic"),
                      wraplength=160, justify="center").pack(fill="x", padx=6)
 
     def _render_siblings(self, pid, target_sibs=None, target_ratio=None):
@@ -4459,7 +3785,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
             def _go_page(p, _pid=pid, _ts=_tgt_s, _tr=_tgt_r):
                 self._pods_page = p
                 self._render_siblings(_pid, target_sibs=_ts, target_ratio=_tr)
-            BTN_BG = "#2a5a7a"
+            BTN_BG = theme.BUTTON_BG
             _is_mac = getattr(self, "_is_mac", False)
             if _is_mac:
                 _prev_btn = ttk.Button(nav, text="\u25c0", style="Nav.TButton",
@@ -4785,17 +4111,17 @@ class TraitInheritanceExplorer(tk.Toplevel):
         pct = "  /  ".join(f"{v*100/total:.1f}%" for v in counts)
 
         # Compact box
-        box = tk.Frame(panel, bg="#12303f",
-                       highlightthickness=1, highlightbackground="#2a5a7a")
+        box = tk.Frame(panel, bg=self.CARD,
+                       highlightthickness=1, highlightbackground=theme.BUTTON_BG)
         box.pack(fill="x", pady=(0, 4))
-        top = tk.Frame(box, bg="#12303f")
+        top = tk.Frame(box, bg=self.CARD)
         top.pack(fill="x", padx=6, pady=(4, 2))
-        tk.Label(top, text="Total ratio", bg="#12303f", fg=self.MUTED,
-                 font=("Segoe UI", 8)).pack(side="left")
-        tk.Label(top, text=ratio_str, bg="#12303f", fg=self.FG,
-                 font=("Segoe UI", 11, "bold")).pack(side="right")
-        tk.Label(box, text=pct, bg="#12303f", fg=self.MUTED,
-                 font=("Segoe UI", 8), anchor="center").pack(padx=6, pady=(0, 4))
+        tk.Label(top, text="Total ratio", bg=self.CARD, fg=self.MUTED,
+                 font=(theme.UI_FONT, 8)).pack(side="left")
+        tk.Label(top, text=ratio_str, bg=self.CARD, fg=self.FG,
+                 font=(theme.UI_FONT, 11, "bold")).pack(side="right")
+        tk.Label(box, text=pct, bg=self.CARD, fg=self.MUTED,
+                 font=(theme.UI_FONT, 8), anchor="center").pack(padx=6, pady=(0, 4))
 
         # Icon row
         icon_row = tk.Frame(panel, bg=self.PANEL)
@@ -4810,7 +4136,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
             if tkey == "pod_shape":
                 s = str(val_name).lower()
                 s = "constricted" if "constrict" in s else ("inflated" if "inflate" in s else s)
-                try: _p = pod_shape_icon_path(s, "green")
+                try: _p = icon_loader.pod_shape_icon_path(s, "green")
                 except: _p = ""
                 im = self._greyscale_icon_from_path(_p, sx=1, sy=1) if _p else None
                 if im is None:
@@ -4870,21 +4196,21 @@ class TraitInheritanceExplorer(tk.Toplevel):
 
         tk.Label(grp, text=title,
                  bg=self.PANEL, fg=self.MUTED,
-                 font=("Segoe UI", ttl_fs)).pack(pady=top_pad)
+                 font=(theme.UI_FONT, ttl_fs)).pack(pady=top_pad)
 
-        box = tk.Frame(grp, bg="#12303f",
-                       highlightthickness=2, highlightbackground="#2a5a7a")
+        box = tk.Frame(grp, bg=self.CARD,
+                       highlightthickness=2, highlightbackground=theme.BUTTON_BG)
         box.pack(pady=(0, box_pad[1]), ipadx=box_ipad, ipady=box_ipady)
 
         tk.Label(box, text=ratio_str,
-                 bg="#12303f", fg=self.FG,
-                 font=("Segoe UI", ratio_fs, "bold"),
+                 bg=self.CARD, fg=self.FG,
+                 font=(theme.DISPLAY_FONT, ratio_fs, "bold"),
                  anchor="center").pack(pady=(2, 0))
 
         if pct_parts:
             tk.Label(box, text="  /  ".join(pct_parts),
-                     bg="#12303f", fg=self.MUTED,
-                     font=("Segoe UI", pct_fs),
+                     bg=self.CARD, fg=self.MUTED,
+                     font=(theme.UI_FONT, pct_fs),
                      anchor="center").pack(pady=(2, 4))
 
         # Icon + count row — centred within the sub-frame
@@ -4908,7 +4234,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
                         s = str(val_name).lower()
                         s = "constricted" if "constrict" in s else ("inflated" if "inflate" in s else s)
                         try:
-                            _p = pod_shape_icon_path(s, "green")
+                            _p = icon_loader.pod_shape_icon_path(s, "green")
                         except Exception:
                             _p = ""
                         im = self._greyscale_icon_from_path(_p, sx=icon_sc, sy=icon_sc) if _p else None
@@ -5166,17 +4492,17 @@ class TraitInheritanceExplorer(tk.Toplevel):
         _rfs = 1.4 if getattr(self, "_ratio_font_large", False) else 1.0
         def _fs(base): return int(round(base * _rfs))
 
-        SEP_BG     = "#1e3a4a"
-        HDR_FONT   = ("Segoe UI", _fs(11), "bold")
-        NOTE_FONT  = ("Segoe UI", _fs(10))
+        SEP_BG     = theme.BROWSER_ACCENT
+        HDR_FONT   = (theme.UI_FONT, _fs(11), "bold")
+        NOTE_FONT  = (theme.UI_FONT, _fs(10))
         MONO_FONT  = ("Consolas", _fs(10))
-        GREEN_NOTE = "#6dbf67"
+        GREEN_NOTE = theme.BROWSER_SUCCESS
 
         def _sep():
             tk.Frame(inner, height=1, bg=SEP_BG).pack(fill="x", padx=12, pady=8)
 
         def _white_sep():
-            tk.Frame(inner, height=1, bg="#c8d8e0").pack(fill="x", padx=12, pady=(6, 4))
+            tk.Frame(inner, height=1, bg=theme.PANEL_ACCENT).pack(fill="x", padx=12, pady=(6, 4))
 
         # Collect pooled data up front (needed by both families and pooled sections)
         dom_pheno, rec_pheno, sci_dom, sci_rec, families = \
@@ -5258,9 +4584,9 @@ class TraitInheritanceExplorer(tk.Toplevel):
                 ("Ratio",     "e", 90,  False),
             ]
 
-            HDR_ROW_FONT  = ("Segoe UI",  _fs(10), "bold")
+            HDR_ROW_FONT  = (theme.UI_FONT,  _fs(10), "bold")
             DATA_ROW_FONT = ("Consolas",  _fs(11))
-            TOT_ROW_FONT  = ("Segoe UI",  _fs(11), "bold")
+            TOT_ROW_FONT  = (theme.UI_FONT,  _fs(11), "bold")
             PAD_X = (6, 6)
 
             # configure column weights so the last column fills available space
@@ -5268,16 +4594,16 @@ class TraitInheritanceExplorer(tk.Toplevel):
                 tbl.columnconfigure(ci, minsize=minw, weight=1 if stretch else 0)
 
             # header row
-            hdr_bg = "#0a1e2a"
+            hdr_bg = theme.WOOD_DARK
             for ci, (hdr_txt, anc, _, _) in enumerate(COLS):
-                tk.Label(tbl, text=hdr_txt, bg=hdr_bg, fg=self.MUTED,
+                tk.Label(tbl, text=hdr_txt, bg=hdr_bg, fg=theme.TEXT_LIGHT,
                          font=HDR_ROW_FONT, anchor=anc,
                          padx=6, pady=4
                          ).grid(row=0, column=ci, sticky="ew", padx=(0, 0))
 
             # data rows
             for ri, fam in enumerate(families):
-                row_bg = self.CARD if ri % 2 == 0 else "#0d1f2e"
+                row_bg = self.CARD if ri % 2 == 0 else theme.BROWSER_ALT_ROW
                 if fam["rec"] > 0:
                     ratio_str = f"{fam['dom'] / fam['rec']:.2f}:1".replace(".", ",")
                 elif fam["dom"] > 0:
@@ -5303,7 +4629,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
             last_data_row = len(families) + 1
 
             # thin white separator spanning all columns
-            sep = tk.Frame(tbl, height=1, bg="#c8d8e0")
+            sep = tk.Frame(tbl, height=1, bg=theme.PANEL_ACCENT)
             sep.grid(row=last_data_row, column=0, columnspan=len(COLS),
                      sticky="ew", pady=(2, 0))
 
@@ -5383,9 +4709,9 @@ class TraitInheritanceExplorer(tk.Toplevel):
                       font=NOTE_FONT).pack(anchor="e", pady=(10, 0))
 
         help_btn = tk.Button(n_row, text="?", command=_show_pool_help,
-                             font=("Segoe UI", 9, "bold"),
-                             bg="#1e3a4a", fg=self.MUTED,
-                             activebackground="#2a4a5a", activeforeground=self.FG,
+                             font=(theme.UI_FONT, 9, "bold"),
+                             bg=theme.BROWSER_ACCENT, fg=theme.TEXT_LIGHT,
+                             activebackground=theme.BUTTON_HOVER, activeforeground=theme.BUTTON_FG,
                              relief="flat", bd=0, padx=5, pady=0, cursor="hand2")
         help_btn.pack(side="left", padx=(8, 0))
 
@@ -5997,18 +5323,18 @@ class TraitInheritanceExplorer(tk.Toplevel):
         for ci, gam in enumerate(gametes):
             cx = ML + ci * CELL + CELL // 2
             c.create_rectangle(ML + ci * CELL, MT - 38, ML + (ci + 1) * CELL, MT,
-                                fill="#12303f", outline="#2a5060")
+                                fill=self.CARD, outline=theme.PANEL_BORDER)
             c.create_text(cx, MT - 19, text=gam, fill=FG, font=FONT_G)
 
         # Row headers
         for ri, gam in enumerate(gametes):
             ry = MT + ri * CELL + CELL // 2
             c.create_rectangle(ML - 44, MT + ri * CELL, ML, MT + (ri + 1) * CELL,
-                                fill="#12303f", outline="#2a5060")
+                                fill=self.CARD, outline=theme.PANEL_BORDER)
             c.create_text(ML - 22, ry, text=gam, fill=FG, font=FONT_G)
 
         # Diagonal corner header
-        c.create_rectangle(ML - 44, MT - 38, ML, MT, fill="#0a1e2a", outline="#2a5060")
+        c.create_rectangle(ML - 44, MT - 38, ML, MT, fill=theme.WOOD_DARK, outline=theme.PANEL_BORDER)
         c.create_text(ML - 22, MT - 19, text="×", fill=MUTED, font=FONT)
 
         # Cells
@@ -6027,7 +5353,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
                 has_data = observed > 0
                 bg = self._PUNNETT_COLORS_MONO[cls_idx] if has_data else self._PUNNETT_DIM_MONO[cls_idx]
 
-                c.create_rectangle(x0, y0, x1, y1, fill=bg, outline="#2a5060", width=2)
+                c.create_rectangle(x0, y0, x1, y1, fill=bg, outline=theme.PANEL_BORDER, width=2)
 
                 # Trait icon — centred in cell
                 try:
@@ -6063,7 +5389,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
             c.create_text(ML - 44, ly + 36,
                           text="No sibling data yet — showing expected structure.\n"
                                "Try another plant or grow more seeds.",
-                          fill="#c08040", font=("Segoe UI", 10), anchor="nw",
+                          fill=theme.BROWSER_EMPHASIS, font=(theme.UI_FONT, 10), anchor="nw",
                           width=W - (ML - 44) - 8)
 
     # ── Dihybrid 4×4 ─────────────────────────────────────────────────────────
@@ -6147,18 +5473,18 @@ class TraitInheritanceExplorer(tk.Toplevel):
         for ci, gl in enumerate(gam_labels):
             cx = ML + ci * CELL + CELL // 2
             c.create_rectangle(ML + ci * CELL, MT - 46, ML + (ci+1)*CELL, MT,
-                                fill="#12303f", outline="#2a5060")
+                                fill=self.CARD, outline=theme.PANEL_BORDER)
             c.create_text(cx, MT - 23, text=gl, fill=FG, font=FONT_G)
 
         # Row headers
         for ri, gl in enumerate(gam_labels):
             ry = MT + ri * CELL + CELL // 2
             c.create_rectangle(ML - 52, MT + ri * CELL, ML, MT + (ri+1)*CELL,
-                                fill="#12303f", outline="#2a5060")
+                                fill=self.CARD, outline=theme.PANEL_BORDER)
             c.create_text(ML - 26, ry, text=gl, fill=FG, font=FONT_G)
 
         # Corner
-        c.create_rectangle(ML - 52, MT - 46, ML, MT, fill="#0a1e2a", outline="#2a5060")
+        c.create_rectangle(ML - 52, MT - 46, ML, MT, fill=theme.WOOD_DARK, outline=theme.PANEL_BORDER)
         c.create_text(ML - 26, MT - 23, text="×", fill=MUTED, font=FONT)
 
         # Cells
@@ -6182,7 +5508,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
                 has_data  = observed > 0
 
                 bg = self._PUNNETT_COLORS[cls_idx] if has_data else self._PUNNETT_DIM[cls_idx]
-                c.create_rectangle(x0, y0, x1, y1, fill=bg, outline="#2a5060", width=1)
+                c.create_rectangle(x0, y0, x1, y1, fill=bg, outline=theme.PANEL_BORDER, width=1)
 
                 mid_x = x0 + CELL // 2
                 pheno1 = dom1 if is_dom_t1 else rec1
@@ -6276,7 +5602,7 @@ class TraitInheritanceExplorer(tk.Toplevel):
             c.create_text(ML - 52, cy_summary + 36, anchor="nw",
                           text="No sibling data yet — showing expected structure. "
                                "Try another plant or grow more seeds.",
-                          fill="#c08040", font=("Segoe UI", 10),
+                          fill=theme.BROWSER_EMPHASIS, font=(theme.UI_FONT, 10),
                           width=ML + GRID_W + 52)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
